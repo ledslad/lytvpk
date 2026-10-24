@@ -1,9 +1,8 @@
 package app
 
 import (
+	"context"
 	"fmt"
-	"github.com/hymkor/trash-go"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"io"
 	"log"
 	"os"
@@ -11,6 +10,11 @@ import (
 	"path/filepath"
 	rt "runtime"
 	"strings"
+	"time"
+
+	"github.com/hymkor/trash-go"
+	"github.com/pkg/browser"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"vpk-manager/internal/serveraddress"
 )
@@ -270,7 +274,13 @@ func (a *App) LaunchL4D2() error {
 
 // ConnectToServer 连接到指定服务器
 func (a *App) ConnectToServer(address string) error {
-	address, err := serveraddress.Normalize(address)
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	steamURL, err := serveraddress.SteamConnectURL(ctx, address)
 	if err != nil {
 		return err
 	}
@@ -284,8 +294,9 @@ func (a *App) ConnectToServer(address string) error {
 		log.Printf("问题 Mod 查找进行中，跳过 Mod 轮换")
 	}
 
-	steamURL := fmt.Sprintf("steam://connect/%s", address)
-	runtime.BrowserOpenURL(a.ctx, steamURL)
+	if err := browser.OpenURL(steamURL); err != nil {
+		return fmt.Errorf("无法打开 Steam 连接链接，请检查 Steam 是否已安装及 steam 协议关联：%w", err)
+	}
 	return nil
 }
 

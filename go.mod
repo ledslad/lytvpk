@@ -9,6 +9,7 @@ require (
 	github.com/hymkor/trash-go v0.3.0
 	github.com/nwaples/rardecode/v2 v2.4.5
 	github.com/panjf2000/ants/v2 v2.12.1
+	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/wailsapp/wails/v2 v2.10.2
 	golang.org/x/net v0.61.0
 	golang.org/x/sys v0.49.0
@@ -37,7 +38,6 @@ require (
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/pierrec/lz4/v4 v4.1.33 // indirect
-	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/samber/lo v1.52.0 // indirect

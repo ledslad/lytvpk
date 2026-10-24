@@ -65,6 +65,8 @@ const url = `lytvpk://favoriteServer/${encodeURIComponent(name)}/${encodeURIComp
 
 点击“连接”会启动 L4D2 并连接到对应服务器。
 
+域名会先解析为数字 IP，再通过 `steam://connect/IP:端口` 交给 Steam，避免 Steam 收到域名链接后无反应。域名解析最多等待 5 秒；解析或系统打开协议失败会显示错误。界面提交成功只表示已交给 Steam，不代表游戏已成功连入。
+
 主侧边栏底部的启动按钮会记录最近连接的服务器，方便下次快速进入。
 
 ## IP 直连
