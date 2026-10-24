@@ -1,16 +1,4 @@
-import "../../../css/app/community-sync.css";
-import {
-  ConnectToServer,
-  GetCommunityServerStatuses,
-  GetRootDirectory,
-  PreviewServerMapSync,
-  StartServerMapSync,
-  RestoreLastServerMapSync,
-} from "../../../../wailsjs/go/app/App";
-import { BrowserOpenURL } from "../../../../wailsjs/runtime/runtime";
-import { getConfig, saveConfig } from "../../core/config.js";
-import { switchAppPage } from "../../core/ui-shell.js";
-import { COMMUNITY_SERVER_PRESETS, formatSyncBytes } from "./community-presets.js";
+import { COMMUNITY_SERVER_PRESETS, formatSyncBytes, normalizeSyncSource } from "./presets.js";
 
 const COMMUNITY_STATUS_PAGE = "https://l4d2.fastbot.top/servers";
 const mountedViews = new WeakMap();
@@ -19,6 +7,41 @@ function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+const ICON_PATHS = {
+  home: ["m3 10 9-7 9 7", "M5 9v11h14V9", "M9 20v-7h6v7"],
+  server: ["M4 4h16v6H4z", "M4 14h16v6H4z", "M8 7h.01", "M8 17h.01"],
+  refresh: ["M20 7v5h-5", "M4 17v-5h5", "M6.1 8a7 7 0 0 1 11.6-2L20 8", "M4 16l2.3 2A7 7 0 0 0 18 16"],
+  external: ["M15 3h6v6", "m21 3-9 9", "M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"],
+  arrow: ["M4 12h16", "m14 6 6 6-6 6"],
+  sync: ["M12 3v12", "m7 10 5 5 5-5", "M4 16v5h16v-5"],
+  folder: ["M3 7V5h6l2 2h10v13H3z"],
+  restore: ["M3 5v6h6", "M3 11a9 9 0 1 1 2.5 8", "M12 7v5l3 2"],
+  shield: ["m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6z", "m8 12 3 3 5-6"],
+};
+
+function icon(name) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  node.setAttribute("viewBox", "0 0 24 24");
+  node.setAttribute("fill", "none");
+  node.setAttribute("stroke", "currentColor");
+  node.setAttribute("stroke-width", "1.7");
+  node.setAttribute("stroke-linecap", "round");
+  node.setAttribute("stroke-linejoin", "round");
+  node.setAttribute("aria-hidden", "true");
+  node.setAttribute("class", "safehouse-icon");
+  for (const d of ICON_PATHS[name] || []) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    node.appendChild(path);
+  }
+  return node;
+}
+
+function withIcon(node, name) {
+  node.prepend(icon(name));
   return node;
 }
 
@@ -48,62 +71,116 @@ function isVisible(view) {
   return view.closest(".page-view")?.classList.contains("active") && !document.hidden;
 }
 
-function createCommunityView(parent) {
+function createCommunityView(parent, services) {
+  const {
+    ConnectToServer, GetCommunityServerStatuses, GetRootDirectory,
+    PreviewServerMapSync, StartServerMapSync, RestoreLastServerMapSync,
+    getConfig, saveConfig, switchAppPage, BrowserOpenURL,
+  } = services;
   const view = element("section", "community-sync-view");
-  const heading = element("div", "community-sync-heading");
-  heading.appendChild(element("h3", "", "预设服务器"));
-  const statusActions = element("div", "community-sync-actions");
-  const refresh = button("刷新状态", () => refreshStatuses());
-  statusActions.append(refresh, button("网站状态页", () => BrowserOpenURL(COMMUNITY_STATUS_PAGE)));
-  heading.appendChild(statusActions);
+  const heading = element("header", "safehouse-page-header");
+  const brand = element("div", "safehouse-brand");
+  const brandMark = element("div", "safehouse-brand-mark");
+  brandMark.appendChild(icon("home"));
+  const brandCopy = element("div", "safehouse-brand-copy");
+  brandCopy.append(
+    element("h2", "", "麻衣安全屋"),
+    element("p", "", "连接服务器，让本机地图与服务器保持同步。"),
+  );
+  brand.append(brandMark, brandCopy);
+  const statusActions = element("div", "community-sync-actions safehouse-header-actions");
+  const refresh = withIcon(button("刷新状态", () => refreshStatuses()), "refresh");
+  statusActions.append(refresh, withIcon(button("网站状态页", () => BrowserOpenURL(COMMUNITY_STATUS_PAGE)), "external"));
+  heading.append(brand, statusActions);
   const cards = element("div", "community-server-cards");
   const statusViews = new Map();
   for (const preset of COMMUNITY_SERVER_PRESETS) {
     const card = element("article", "community-server-card");
-    const name = element("strong", "", preset.name);
+    const cardHeading = element("div", "community-server-heading");
+    const identity = element("div", "community-server-identity");
+    const serverMark = element("div", "community-server-symbol");
+    serverMark.appendChild(icon("server"));
+    const serverCopy = element("div", "community-server-copy");
+    serverCopy.append(element("strong", "", preset.name), element("span", "community-server-mode", preset.mode));
+    identity.append(serverMark, serverCopy);
     const state = element("span", "community-server-state", "等待查询");
-    const title = element("div", "community-server-title", preset.mode);
-    const map = element("div", "community-server-map", preset.address);
-    const info = element("div", "community-server-info");
-    const actions = element("div", "community-sync-actions");
+    const body = element("div", "community-server-body");
+    const title = element("div", "community-server-title", "状态尚未更新");
+    const map = element("div", "community-server-map", "等待查询地图");
+    body.append(element("span", "safehouse-field-label", "当前地图"), map, title);
+    const footer = element("div", "community-server-footer");
+    const address = element("div", "community-server-address");
+    const info = element("div", "community-server-info", "");
+    address.append(element("code", "", preset.address), info);
     const connect = button("连接服务器", async () => {
       connect.disabled = true;
       try { await ConnectToServer(preset.address); }
-      catch (error) { state.textContent = String(error?.message || error); state.dataset.state = "error"; }
+      catch (error) { info.textContent = `连接失败：${String(error?.message || error)}`; }
       finally { connect.disabled = false; }
     }, true);
-    actions.appendChild(connect);
-    card.append(name, state, title, map, info, actions);
+    withIcon(connect, "arrow");
+    cardHeading.append(identity, state);
+    footer.append(address, connect);
+    card.append(cardHeading, body, footer);
     statusViews.set(preset.id, { state, title, map, info });
     cards.appendChild(card);
   }
   view.append(heading, cards);
 
   const sync = element("section", "community-map-sync");
-  const syncHeading = element("div", "community-sync-heading");
-  syncHeading.appendChild(element("h3", "", "同步服务器地图"));
-  const settings = button("修改同步服务器", () => switchAppPage("settings"));
-  syncHeading.appendChild(settings);
-  const source = element("p", "community-sync-source");
+  const syncHeading = element("div", "safehouse-section-heading");
+  const syncMark = element("div", "safehouse-section-mark");
+  syncMark.appendChild(icon("sync"));
+  const syncCopy = element("div");
+  syncCopy.append(element("h3", "", "同步服务器地图"), element("p", "", "先预览变更，再将缺图加入下载队列。"));
+  syncHeading.append(syncMark, syncCopy);
+  const sourceField = element("div", "safehouse-source-field");
+  const sourceRow = element("div", "map-sync-source-row");
+  const sourceLabel = element("label", "", "同步来源");
+  sourceLabel.htmlFor = "safehouse-sync-source";
+  const source = element("input", "form-input community-sync-source");
+  source.id = "safehouse-sync-source";
+  source.type = "text";
+  source.placeholder = "cd.fastbot.top";
+  source.autocomplete = "off";
+  source.spellcheck = false;
+  source.addEventListener("input", () => {
+    invalidatePlan();
+    preview.disabled = sourceIsDirty();
+  });
+  const settings = button("保存", () => saveSource());
+  sourceRow.append(source, settings);
+  sourceField.append(sourceLabel, sourceRow);
+  const directoryRow = element("div", "safehouse-directory");
   const directory = element("p", "community-sync-directory");
-  const note = element("p", "community-sync-note", "补齐缺图，并按服务器明确删除记录隔离旧图。其他 MOD、workshop 子目录和仍在服务器清单里的依赖会保留。");
+  directoryRow.append(icon("folder"), directory);
+  const note = element("p", "community-sync-note", "仅按服务器明确的删除记录隔离备份，其他 MOD 不受影响。");
+  const toolbar = element("div", "safehouse-sync-toolbar");
   const actions = element("div", "community-sync-actions");
-  const preview = button("预览地图同步", () => previewSync());
-  const apply = button("执行同步", () => applySync(), true);
+  const secondaryActions = element("div", "community-sync-actions safehouse-secondary-actions");
+  const preview = withIcon(button("预览地图同步", () => previewSync(), true), "sync");
+  const apply = button("执行同步", () => applySync());
+  apply.classList.add("safehouse-apply");
   apply.disabled = true;
-  const restore = button("恢复上次清理", () => restoreSync());
+  const restore = withIcon(button("恢复上次清理", () => restoreSync()), "restore");
   const downloads = button("查看下载任务", () => switchAppPage("downloads"));
-  actions.append(preview, apply, restore, downloads);
+  actions.append(preview, apply);
+  secondaryActions.append(restore, downloads);
+  toolbar.append(actions, secondaryActions);
   const cleanupLabel = element("label", "community-sync-checkbox");
   const cleanup = element("input");
   cleanup.type = "checkbox";
   cleanup.checked = true;
-  cleanupLabel.append(cleanup, document.createTextNode("同时清理明确删除的旧地图（移至可恢复目录）"));
-  const message = element("p", "community-sync-message", "选择本机 addons 目录后，先预览待下载与待清理的地图。");
+  cleanupLabel.append(cleanup, document.createTextNode("同时清理服务器已删除的旧地图"), element("span", "safehouse-recoverable", "可恢复"));
+  const cleanupOptions = element("div", "safehouse-cleanup-options");
+  const cleanupNote = element("div", "safehouse-cleanup-note");
+  cleanupNote.append(icon("shield"), note);
+  cleanupOptions.append(cleanupLabel, cleanupNote);
+  const message = element("p", "community-sync-message", "预览后可展开查看待下载与待清理的地图。");
   message.setAttribute("role", "status");
   message.setAttribute("aria-live", "polite");
   const lists = element("div", "community-sync-lists");
-  sync.append(syncHeading, source, directory, note, actions, cleanupLabel, message, lists);
+  sync.append(syncHeading, directoryRow, sourceField, toolbar, cleanupOptions, message, lists);
   view.appendChild(sync);
   parent.prepend(view);
 
@@ -113,11 +190,16 @@ function createCommunityView(parent) {
   let requestSequence = 0;
   let lastStatusAt = 0;
 
+  function sourceIsDirty() {
+    return source.value.trim() !== (getConfig().mapSyncServer || "cd.fastbot.top");
+  }
+
   function setBusy(value) {
     busy = value;
-    preview.disabled = value;
+    preview.disabled = value || sourceIsDirty();
     restore.disabled = value;
     settings.disabled = value;
+    source.disabled = value;
     cleanup.disabled = value;
     apply.disabled = value || !currentPlan;
   }
@@ -132,11 +214,30 @@ function createCommunityView(parent) {
     message.dataset.state = "error";
   }
 
+  async function saveSource() {
+    if (busy) return;
+    const previous = getConfig().mapSyncServer || "cd.fastbot.top";
+    invalidatePlan();
+    setBusy(true);
+    try {
+      const server = normalizeSyncSource(source.value);
+      await saveConfig({ mapSyncServer: server });
+      source.value = server;
+      source.dataset.source = server;
+      message.textContent = "同步来源已保存，请重新预览。";
+      message.dataset.state = "success";
+      lists.replaceChildren();
+    } catch (error) {
+      try { await saveConfig({ mapSyncServer: previous }); } catch { /* Keep the original error. */ }
+      fail(error);
+    } finally { setBusy(false); }
+  }
+
   async function updateContext() {
     const configured = getConfig().mapSyncServer || "cd.fastbot.top";
     if (source.dataset.source !== configured) {
       source.dataset.source = configured;
-      source.textContent = `同步来源：${configured}（设置 → 网络设置可修改）`;
+      source.value = configured;
       invalidatePlan();
     }
     try {
@@ -165,12 +266,16 @@ function createCommunityView(parent) {
         const output = statusViews.get(preset.id);
         const server = data.servers.find((item) => item.id === preset.id);
         const available = server?.online === true;
-        output.state.textContent = available ? `在线 · ${Number(server.players) || 0}/${Number(server.max_players) || 0} 人` : "离线或暂时无法查询";
+        if (available) {
+          output.state.replaceChildren(element("span", "", "在线"), element("strong", "community-server-count", `${Number(server.players) || 0}/${Number(server.max_players) || 0}`));
+        } else {
+          output.state.textContent = "暂不可用";
+        }
         output.state.dataset.state = available ? "online" : "offline";
-        output.title.textContent = available ? (server.server_name || preset.mode) : preset.mode;
+        output.title.textContent = available ? (server.server_name || preset.mode) : "服务器离线或暂时无法查询";
         const chapter = server?.chapter && server?.chapter_count ? ` ${server.chapter}/${server.chapter_count}` : "";
-        output.map.textContent = available ? `${server.map_title || server.map || "未知地图"}${chapter}` : preset.address;
-        output.info.textContent = available ? `${preset.address} · 查询延迟 ${Number(server.ping_ms) || 0} ms` : "连接按钮仍可直接尝试加入";
+        output.map.textContent = available ? `${server.map_title || server.map || "未知地图"}${chapter}` : "暂无地图信息";
+        output.info.textContent = available ? `查询延迟 ${Number(server.ping_ms) || 0} ms` : "可尝试直接连接";
       }
       lastStatusAt = Date.now();
     } catch (error) {
@@ -179,7 +284,7 @@ function createCommunityView(parent) {
         output.state.textContent = "状态查询失败";
         output.state.dataset.state = "error";
         output.title.textContent = preset.mode;
-        output.map.textContent = preset.address;
+        output.map.textContent = "暂无地图信息";
         output.info.textContent = String(error?.message || error);
       }
     } finally {
@@ -190,6 +295,10 @@ function createCommunityView(parent) {
 
   async function previewSync() {
     if (busy) return;
+    if (sourceIsDirty()) {
+      message.textContent = "请先保存同步来源，再预览地图。";
+      return;
+    }
     invalidatePlan();
     setBusy(true);
     message.textContent = "正在查询服务器清单、删除记录并比对本机地图…";
@@ -199,7 +308,7 @@ function createCommunityView(parent) {
       const plan = await PreviewServerMapSync();
       if (!plan?.id) throw new Error("未获得有效的同步预览");
       currentPlan = plan;
-      source.textContent = `同步来源：${plan.server}`;
+      source.value = plan.server;
       directory.textContent = `本机目录：${plan.directory}`;
       const missing = Array.isArray(plan.missing) ? plan.missing : [];
       const cleanupItems = Array.isArray(plan.cleanup) ? plan.cleanup : [];
@@ -246,7 +355,7 @@ function createCommunityView(parent) {
   }
 
   const pageChanged = (event) => {
-    if (event.detail?.page !== "servers") return;
+    if (event.detail?.page !== "safehouse") return;
     updateContext();
     if (Date.now() - lastStatusAt >= 30000) refreshStatuses();
   };
@@ -267,13 +376,14 @@ function createCommunityView(parent) {
   return { view, updateContext, refreshStatuses };
 }
 
-export function mountCommunityServers(list) {
-  const parent = list?.closest(".server-scroll-content");
+export function mountSafehouseView(parent, services) {
   if (!parent) return;
   const existing = mountedViews.get(parent);
   if (existing?.view.isConnected) {
     existing.updateContext();
-    return;
+    return existing;
   }
-  mountedViews.set(parent, createCommunityView(parent));
+  const result = createCommunityView(parent, services);
+  mountedViews.set(parent, result);
+  return result;
 }

@@ -3,18 +3,6 @@ export const COMMUNITY_SERVER_PRESETS = [
   { id: "gd", name: "广东 · 对抗练习服", address: "gd.fastbot.top", mode: "ZoneMod · 4v4 + 观众" },
 ];
 
-export function mergeCommunityPresets(recentServers = []) {
-  const result = [];
-  const seen = new Set();
-  for (const server of [...COMMUNITY_SERVER_PRESETS, ...recentServers]) {
-    const key = String(server.address || "").trim().toLowerCase().replace(/:27015$/, "");
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    result.push(server);
-  }
-  return result;
-}
-
 export function normalizeSyncSource(value) {
   const text = String(value || "").trim() || "cd.fastbot.top";
   let address;

@@ -16,6 +16,7 @@ const MENU_ITEMS = [
   { page: "workshop", sourceId: "browser-btn", label: "创意工坊", icon: NAV_ICONS.workshop },
   { page: "downloads", sourceId: "workshop-btn", label: "下载与解析", icon: NAV_ICONS.downloads },
   { page: "servers", sourceId: "server-favorites-btn", label: "收藏服务器", icon: NAV_ICONS.servers },
+  { page: "safehouse", id: "app-nav-safehouse", label: "麻衣安全屋", icon: NAV_ICONS.servers },
   { page: "diagnostics", id: "app-nav-diagnostics", label: "工具箱", icon: NAV_ICONS.diagnostics },
   { page: "settings", sourceId: "global-settings-btn", label: "设置", icon: NAV_ICONS.settings },
   { id: "app-nav-docs", label: "使用说明", icon: NAV_ICONS.docs, externalUrl: DOCS_URL },
@@ -220,6 +221,13 @@ function buildPages(container) {
   container.appendChild(embedModalAsPage("browser-modal", "workshop", "workshop-page"));
   container.appendChild(embedModalAsPage("workshop-modal", "downloads", "downloads-page"));
   container.appendChild(embedModalAsPage("server-modal", "servers", "servers-page"));
+
+  const safehousePage = createPage("safehouse", "safehouse-page");
+  const safehouseBody = document.createElement("div");
+  safehouseBody.id = "safehouse-page-content";
+  safehouseBody.className = "page-body";
+  safehousePage.appendChild(safehouseBody);
+  container.appendChild(safehousePage);
 
   const settingsPage = createPage("settings", "settings-page");
   settingsPage.innerHTML = `<div id="settings-page-content" class="page-body"></div>`;

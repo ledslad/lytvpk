@@ -33,6 +33,7 @@ import {
   openModelStatsScanModal,
 } from "./diagnostics/model-stats-scan.js";
 import { renderSettingsPage } from "./settings/settings-page.js";
+import { mountSafehousePage } from "./safehouse/safehouse.js";
 import {
   configureServers,
   setupServerModalListeners,
@@ -556,6 +557,7 @@ async function initializeApp() {
 
   initTheme();
   initAppShell();
+  mountSafehousePage();
   setupThemeToggle();
   setupPageChangeListeners();
   setupSettingsAndAboutListeners();

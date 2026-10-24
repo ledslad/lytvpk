@@ -1,4 +1,4 @@
-import { normalizeSyncSource } from "../servers/community-presets.js";
+import { normalizeSyncSource } from "../safehouse/presets.js";
 
 export function mountMapSyncSettings({ getConfig, saveConfig }) {
   const panel = document.getElementById("settings-panel-network");
@@ -27,7 +27,7 @@ export function mountMapSyncSettings({ getConfig, saveConfig }) {
   save.textContent = "保存服务器";
   const hint = document.createElement("p");
   hint.className = "community-sync-note";
-  hint.textContent = "填写支持公开地图同步接口的域名或 HTTPS 地址。默认使用 cd.fastbot.top，无需 token；在服务器页面预览并执行同步。";
+  hint.textContent = "填写支持公开地图同步接口的域名或 HTTPS 地址。默认使用 cd.fastbot.top，无需 token；在“麻衣安全屋”预览并执行同步。";
   const status = document.createElement("p");
   status.className = "community-sync-message";
   status.setAttribute("role", "status");

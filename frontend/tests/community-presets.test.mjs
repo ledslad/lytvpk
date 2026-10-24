@@ -2,16 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const source = await readFile(new URL("../src/js/features/servers/community-presets.js", import.meta.url), "utf8");
-const { mergeCommunityPresets, normalizeSyncSource } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+const source = await readFile(new URL("../src/js/features/safehouse/presets.js", import.meta.url), "utf8");
+const { COMMUNITY_SERVER_PRESETS, normalizeSyncSource } = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 
-test("presets preserve recent servers without duplicating their default port", () => {
-  const servers = mergeCommunityPresets([
-    { name: "my cd name", address: "CD.FASTBOT.TOP:27015" },
-    { name: "another server", address: "example.org:27016" },
-    { name: "gd recent", address: "gd.fastbot.top" },
+test("safehouse has the two community servers without modifying saved favorites", () => {
+  assert.deepEqual(COMMUNITY_SERVER_PRESETS.map(({ id, address }) => [id, address]), [
+    ["cd", "cd.fastbot.top"], ["gd", "gd.fastbot.top"],
   ]);
-  assert.deepEqual(servers.map((server) => server.address), ["cd.fastbot.top", "gd.fastbot.top", "example.org:27016"]);
 });
 
 test("sync source defaults to cd and accepts HTTPS hosts", () => {

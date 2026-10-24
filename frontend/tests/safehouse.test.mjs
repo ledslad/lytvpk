@@ -1,0 +1,150 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { mountSafehouseView } from "../src/js/features/safehouse/safehouse-view.js";
+
+// Small DOM fixture for exercising the page's async actions without Wails.
+class Node {
+  constructor(tag = "") {
+    this.tagName = tag;
+    this.children = [];
+    this.dataset = {};
+    this.listeners = new Map();
+    this.className = "";
+    this.disabled = false;
+    this.value = "";
+    this.text = "";
+    this.classList = {
+      contains: (name) => this.className.split(" ").includes(name),
+      add: (name) => { if (!this.classList.contains(name)) this.className += ` ${name}`; },
+    };
+  }
+  get isConnected() { return this.connected || Boolean(this.parent?.isConnected); }
+  get textContent() { return this.text + this.children.map((child) => child.textContent).join(""); }
+  set textContent(text) { this.text = text; this.children = []; }
+  append(...nodes) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
+  appendChild(node) { this.append(node); return node; }
+  prepend(node) { node.parent = this; this.children.unshift(node); }
+  replaceChildren(...nodes) { this.children = []; this.text = ""; this.append(...nodes); }
+  setAttribute(name, value) { this[name] = value; }
+  addEventListener(name, callback) { this.listeners.set(name, [...(this.listeners.get(name) || []), callback]); }
+  removeEventListener(name, callback) { this.listeners.set(name, (this.listeners.get(name) || []).filter((item) => item !== callback)); }
+  closest(selector) { return this.classList.contains(selector.slice(1)) ? this : this.parent?.closest(selector); }
+  async emit(name, event = {}) {
+    if (name === "click" && this.disabled) return;
+    await Promise.all((this.listeners.get(name) || []).map((callback) => callback(event)));
+  }
+}
+
+function findAll(node, predicate) {
+  return [node, ...node.children.flatMap((child) => findAll(child, predicate))].filter(predicate);
+}
+
+async function fixture(t) {
+  const doc = new Node();
+  doc.createElement = (tag) => new Node(tag);
+  doc.createElementNS = (_namespace, tag) => new Node(tag);
+  doc.createTextNode = (text) => { const node = new Node(); node.textContent = text; return node; };
+  doc.hidden = false;
+  const previousDocument = globalThis.document;
+  globalThis.document = doc;
+  t.after(() => { globalThis.document = previousDocument; });
+  const timer = { callback: null };
+  t.mock.method(globalThis, "setInterval", (callback) => { timer.callback = callback; return 1; });
+  t.mock.method(globalThis, "clearInterval", () => {});
+  const page = new Node("section");
+  page.connected = true;
+  page.className = "page-view";
+  const parent = new Node("div");
+  page.append(parent);
+  const state = { config: { mapSyncServer: "cd.fastbot.top" }, root: "D:/Game/addons", started: [], connected: [], statusCalls: 0 };
+  const services = {
+    getConfig: () => state.config,
+    saveConfig: async (patch) => Object.assign(state.config, patch),
+    GetRootDirectory: async () => state.root,
+    GetCommunityServerStatuses: async () => {
+      state.statusCalls++;
+      return { servers: [{ id: "cd", online: true, players: 4, max_players: 8, map_title: "Test campaign" }] };
+    },
+    ConnectToServer: async (address) => state.connected.push(address),
+    PreviewServerMapSync: async () => ({
+      id: "preview-1", server: state.config.mapSyncServer, directory: state.root, present: 2, bytes: 1024,
+      missing: [{ id: "map", title: "Missing campaign", size_bytes: 1024 }],
+      cleanup: [{ name: "old.vpk", size: 512 }], unresolved: [],
+    }),
+    StartServerMapSync: async (...args) => { state.started.push(args); return { queued: 1, quarantined: 0 }; },
+    RestoreLastServerMapSync: async () => 1,
+    switchAppPage: () => {}, BrowserOpenURL: () => {},
+  };
+  const mounted = mountSafehouseView(parent, services);
+  await mounted.updateContext();
+  const button = (label) => findAll(parent, (node) => node.tagName === "button" && node.textContent === label)[0];
+  const source = findAll(parent, (node) => node.id === "safehouse-sync-source")[0];
+  const message = findAll(parent, (node) => node.className === "community-sync-message")[0];
+  return { parent, page, doc, state, services, mounted, button, source, message, timer };
+}
+
+test("safehouse requires a preview and keeps cleanup optional with folded details", async (t) => {
+  const { parent, state, button, message } = await fixture(t);
+  assert.equal(button("执行同步").disabled, true);
+  await button("执行同步").emit("click");
+  assert.equal(state.started.length, 0);
+  await button("预览地图同步").emit("click");
+  assert.equal(button("执行同步").disabled, false);
+  const details = findAll(parent, (node) => node.tagName === "details");
+  assert.equal(details.length, 2);
+  assert.ok(details.every((node) => !node.open));
+  const cleanup = findAll(parent, (node) => node.type === "checkbox")[0];
+  cleanup.checked = false;
+  await button("执行同步").emit("click");
+  assert.deepEqual(state.started, [["preview-1", false]]);
+  assert.equal(button("执行同步").disabled, true);
+  assert.match(message.textContent, /提交不等于下载完成/);
+});
+
+test("editing the source invalidates the preview until the new source is saved", async (t) => {
+  const { state, source, button } = await fixture(t);
+  await button("预览地图同步").emit("click");
+  source.value = "https://example.org";
+  await source.emit("input");
+  assert.equal(button("执行同步").disabled, true);
+  assert.equal(button("预览地图同步").disabled, true);
+  await button("保存").emit("click");
+  assert.equal(state.config.mapSyncServer, "example.org");
+  assert.equal(button("预览地图同步").disabled, false);
+  assert.equal(button("执行同步").disabled, true);
+});
+
+test("changing addons directory invalidates the previous preview", async (t) => {
+  const { state, mounted, button } = await fixture(t);
+  await button("预览地图同步").emit("click");
+  state.root = "E:/OtherGame/addons";
+  await mounted.updateContext();
+  assert.equal(button("执行同步").disabled, true);
+});
+
+test("restoring isolated maps clears the old plan and reports the restored count", async (t) => {
+  const { parent, button, message } = await fixture(t);
+  await button("预览地图同步").emit("click");
+  await button("恢复上次清理").emit("click");
+  assert.equal(button("执行同步").disabled, true);
+  assert.match(message.textContent, /已恢复 1 张地图/);
+  assert.equal(findAll(parent, (node) => node.tagName === "details").length, 0);
+});
+
+test("status refresh belongs to the safehouse page and server connections remain separate", async (t) => {
+  const { parent, doc, page, state, timer } = await fixture(t);
+  assert.equal(state.statusCalls, 0);
+  await doc.emit("app:page-change", { detail: { page: "servers" } });
+  assert.equal(state.statusCalls, 0);
+  page.className = "page-view active";
+  await doc.emit("app:page-change", { detail: { page: "safehouse" } });
+  await Promise.resolve();
+  assert.equal(state.statusCalls, 1);
+  page.className = "page-view";
+  timer.callback();
+  assert.equal(state.statusCalls, 1);
+  const connect = findAll(parent, (node) => node.tagName === "button" && node.textContent === "连接服务器");
+  await connect[0].emit("click");
+  await connect[1].emit("click");
+  assert.deepEqual(state.connected, ["cd.fastbot.top", "gd.fastbot.top"]);
+});

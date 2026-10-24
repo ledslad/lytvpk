@@ -16,8 +16,6 @@ import {
 } from "./panel-modal.js";
 import { normalizePanelUrl } from "./panel-url.js";
 import { normalizeServerAddress } from "./address.js";
-import { mountCommunityServers } from "./community-sync.js";
-import { mergeCommunityPresets } from "./community-presets.js";
 import {
   configureDirectConnect,
   setupDirectConnectListeners,
@@ -592,7 +590,6 @@ export async function handleProtocolFavoriteServer(data) {
 export function renderServers() {
   const servers = getServers();
   const list = document.getElementById("server-list");
-  mountCommunityServers(list);
   list.innerHTML = "";
 
   if (servers.length === 0) {
@@ -928,7 +925,7 @@ function renderLaunchServerMenu() {
   const popover = document.getElementById("launch-server-popover");
   if (!popover) return;
 
-  const recentServers = mergeCommunityPresets(getRecentServers().slice().reverse());
+  const recentServers = getRecentServers().slice().reverse();
   const content =
     recentServers.length > 0
       ? recentServers

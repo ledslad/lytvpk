@@ -47,3 +47,8 @@ wails build
 ```
 
 在受限环境中，`wails build` 可能因为权限问题失败，需要在本机正常权限下重新验证。
+
+## 上游合并记录
+
+- 上游项目：[LaoYutang/lytvpk](https://github.com/LaoYutang/lytvpk)。
+- 2026-10-24 合入上游提交 [`b56d50631ba7563568e7be71942ade2b4c6f22b3`](https://github.com/LaoYutang/lytvpk/commit/b56d50631ba7563568e7be71942ade2b4c6f22b3)，并保留本版本的服务器地图同步和两服快捷连接功能。
