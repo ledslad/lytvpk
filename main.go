@@ -18,6 +18,9 @@ var assets embed.FS
 var AppVersion = "0.0.0"
 
 func main() {
+	if backend.RunUpdateInstaller(os.Args) {
+		return
+	}
 	backend.AppVersion = AppVersion
 
 	// 确保单例运行

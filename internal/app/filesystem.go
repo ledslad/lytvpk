@@ -412,6 +412,13 @@ func (a *App) DeleteVPKFiles(filePaths []string) error {
 // queryA2S 使用 UDP 协议直接查询 Source 引擎服务器信息
 
 func (a *App) RestartApplication() error {
+	if pending, err := requestUpdateRestart(); pending || err != nil {
+		if err != nil {
+			return err
+		}
+		runtime.Quit(a.ctx)
+		return nil
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return err

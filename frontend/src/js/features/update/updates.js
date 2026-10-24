@@ -656,7 +656,7 @@ export async function performUpdate(mirrorUrl) {
     config.ignoredVersion = "";
     saveConfig(config);
 
-    showMessageModal("更新成功", "程序将自动重启以应用更新。", async () => {
+    showMessageModal("更新已就绪", "点击确定后退出程序，完成备份和替换后自动重新打开。", async () => {
       try {
         // 尝试调用重启方法
         if (typeof RestartApplication === "function") {

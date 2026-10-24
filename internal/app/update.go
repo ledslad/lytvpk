@@ -1,7 +1,6 @@
 package app
 
 import (
-	"archive/zip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -157,6 +156,9 @@ func fetchLatestTagFromMirror(repo, mirror string) (string, error) {
 
 // CheckUpdate 检查更新
 func (a *App) CheckUpdate() UpdateInfo {
+	if message := consumeUpdateFailure(); message != "" {
+		return UpdateInfo{Error: message}
+	}
 	// 1. 解析当前版本
 	vCurrent, err := semver.ParseTolerant(AppVersion)
 	if err != nil {
@@ -530,66 +532,4 @@ func (wc *WriteCounter) Write(p []byte) (int, error) {
 		wailsRuntime.EventsEmit(wc.Ctx, "update_progress", int(percent))
 	}
 	return n, nil
-}
-
-// installUpdate 解压 zip 并替换当前 exe
-func installUpdate(zipPath, currentExe string) error {
-	// 1. 解压 zip
-	r, err := zip.OpenReader(zipPath)
-	if err != nil {
-		return err
-	}
-	defer r.Close()
-
-	// 寻找 exe 文件
-	var file *zip.File
-	for _, f := range r.File {
-		if strings.HasSuffix(f.Name, ".exe") {
-			file = f
-			break
-		}
-	}
-	if file == nil {
-		return fmt.Errorf("zip 中未找到 exe 文件")
-	}
-
-	// 2. 解压出新文件
-	newExePath := currentExe + ".new"
-	outFile, err := os.Create(newExePath)
-	if err != nil {
-		return err
-	}
-
-	rc, err := file.Open()
-	if err != nil {
-		outFile.Close()
-		return err
-	}
-
-	_, err = io.Copy(outFile, rc)
-	rc.Close()
-	outFile.Close()
-	if err != nil {
-		return err
-	}
-
-	// 3. 替换逻辑 (Windows)
-	oldExePath := currentExe + ".old"
-
-	// 如果存在旧的 .old，先删除
-	os.Remove(oldExePath)
-
-	// 重命名当前 exe -> .old
-	if err := os.Rename(currentExe, oldExePath); err != nil {
-		return fmt.Errorf("备份旧文件失败: %w", err)
-	}
-
-	// 重命名新 exe -> 当前 exe
-	if err := os.Rename(newExePath, currentExe); err != nil {
-		// 尝试回滚
-		os.Rename(oldExePath, currentExe)
-		return fmt.Errorf("替换文件失败: %w", err)
-	}
-
-	return nil
 }
