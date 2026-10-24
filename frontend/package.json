@@ -1,0 +1,17 @@
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/ensure-dist-placeholder.cjs",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^6.4.5"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}

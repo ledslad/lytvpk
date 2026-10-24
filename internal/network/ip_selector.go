@@ -1,0 +1,625 @@
+package network
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
+
+const (
+	steamCDNDomain          = "cdn.steamusercontent.com"
+	uncategorizedIPCategory = "未分类"
+	builtinIPCategory       = "内置"
+	customIPCategory        = "自定义"
+)
+
+type IPOption struct {
+	IP       string `json:"ip"`
+	Category string `json:"category"`
+}
+
+// Embedded Steam CDN IP list (Fallback)
+var defaultSteamCDNIPs = []string{
+	"23.59.72.59",
+	"23.59.72.42",
+	"23.206.175.162",
+	"23.206.175.170",
+	"23.55.51.221",
+	"23.67.75.74",
+}
+
+func defaultIPOptions() []IPOption {
+	options := make([]IPOption, 0, len(defaultSteamCDNIPs))
+	for _, ip := range defaultSteamCDNIPs {
+		options = append(options, IPOption{IP: ip, Category: builtinIPCategory})
+	}
+	return options
+}
+
+func decodeIPOptions(body io.Reader) ([]IPOption, error) {
+	var options []IPOption
+	if err := json.NewDecoder(body).Decode(&options); err != nil {
+		return nil, err
+	}
+	return normalizeIPOptions(options), nil
+}
+
+func normalizeIPOptions(options []IPOption) []IPOption {
+	normalized := make([]IPOption, 0, len(options))
+	seen := make(map[string]struct{}, len(options))
+	for _, option := range options {
+		ip := strings.TrimSpace(option.IP)
+		if ip == "" || net.ParseIP(ip) == nil {
+			continue
+		}
+		if _, exists := seen[ip]; exists {
+			continue
+		}
+
+		category := strings.TrimSpace(option.Category)
+		if category == "" {
+			category = uncategorizedIPCategory
+		}
+		normalized = append(normalized, IPOption{IP: ip, Category: category})
+		seen[ip] = struct{}{}
+	}
+	return normalized
+}
+
+func ipOptionsToIPs(options []IPOption) []string {
+	ips := make([]string, 0, len(options))
+	for _, option := range options {
+		ips = append(ips, option.IP)
+	}
+	return ips
+}
+
+func fetchRemoteIPOptions(domain string) ([]IPOption, error) {
+	apiURL := fmt.Sprintf("https://lytvpk-get-ips.laoyutang.cn/?domain=%s&format=entries", url.QueryEscape(domain))
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return dialer.DialContext(ctx, "tcp4", addr)
+			},
+		},
+	}
+
+	resp, err := client.Get(apiURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("API returned status: %d", resp.StatusCode)
+	}
+
+	options, err := decodeIPOptions(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	return options, nil
+}
+
+func fetchRemoteIPs(domain string) ([]string, error) {
+	options, err := fetchRemoteIPOptions(domain)
+	if err != nil {
+		return nil, err
+	}
+	return ipOptionsToIPs(options), nil
+}
+
+func GetSteamCDNIPOptions() []IPOption {
+	return GlobalIPSelector.getIPOptions(func() ([]IPOption, error) {
+		return fetchRemoteIPOptions(steamCDNDomain)
+	})
+}
+
+type IPSelector struct {
+	cachedBestIP       string
+	cachedBestCategory string
+	cachedSpeed        float64 // Cached download speed in MB/s
+	lastCheck          time.Time
+	isSelecting        bool
+	fixedIP            string
+	ipOptions          []IPOption
+	ipOptionsLoaded    bool
+	ipOptionsLoading   bool
+	ipCategories       map[string]string
+	mu                 sync.RWMutex
+}
+
+var GlobalIPSelector = &IPSelector{}
+
+func (s *IPSelector) SetFixedIP(ip string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fixedIP = ip
+	if ip == "" {
+		s.cachedBestIP = ""
+		s.cachedBestCategory = ""
+		s.cachedSpeed = 0
+	}
+}
+
+func (s *IPSelector) GetFixedIP() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fixedIP
+}
+
+func (s *IPSelector) IsSelecting() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.fixedIP != "" {
+		return false
+	}
+	return s.isSelecting
+}
+
+func (s *IPSelector) GetCachedSpeed() float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cachedSpeed
+}
+
+func (s *IPSelector) GetBestIP(testUrl string) string {
+	s.mu.RLock()
+	// 如果有固定IP，直接使用
+	if s.fixedIP != "" {
+		defer s.mu.RUnlock()
+		return s.fixedIP
+	}
+	// 如果有缓存，直接使用（生命周期为整个程序运行期间）
+	if s.cachedBestIP != "" {
+		defer s.mu.RUnlock()
+		// fmt.Printf("[IPSelector] Using cached best IP: %s\n", s.cachedBestIP)
+		return s.cachedBestIP
+	}
+	s.mu.RUnlock()
+
+	return s.refreshBestIP(testUrl)
+}
+
+func (s *IPSelector) GetCachedBestIP() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.fixedIP != "" {
+		return s.fixedIP
+	}
+	return s.cachedBestIP
+}
+
+func (s *IPSelector) SetIPOptions(options []IPOption) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.setIPOptionsLocked(normalizeIPOptions(options))
+}
+
+func (s *IPSelector) setIPOptionsForTest(options []IPOption) {
+	s.SetIPOptions(options)
+}
+
+func (s *IPSelector) GetCachedBestIPOption() IPOption {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.fixedIP != "" {
+		return IPOption{IP: s.fixedIP, Category: s.categoryForIPLocked(s.fixedIP)}
+	}
+	if s.cachedBestIP == "" {
+		return IPOption{}
+	}
+	category := s.cachedBestCategory
+	if category == "" {
+		category = s.categoryForIPLocked(s.cachedBestIP)
+	}
+	return IPOption{IP: s.cachedBestIP, Category: category}
+}
+
+func (s *IPSelector) getIPOptions(fetcher func() ([]IPOption, error)) []IPOption {
+	s.mu.Lock()
+	if s.ipOptionsLoaded {
+		options := cloneIPOptions(s.ipOptions)
+		s.mu.Unlock()
+		return options
+	}
+	if s.ipOptionsLoading {
+		s.mu.Unlock()
+		for {
+			time.Sleep(50 * time.Millisecond)
+			s.mu.RLock()
+			loaded := s.ipOptionsLoaded
+			loading := s.ipOptionsLoading
+			options := cloneIPOptions(s.ipOptions)
+			s.mu.RUnlock()
+			if loaded {
+				return options
+			}
+			if !loading {
+				break
+			}
+		}
+		return s.getIPOptions(fetcher)
+	}
+	s.ipOptionsLoading = true
+	s.mu.Unlock()
+
+	options, err := fetcher()
+	options = normalizeIPOptions(options)
+	if err != nil || len(options) == 0 {
+		options = defaultIPOptions()
+	}
+
+	s.mu.Lock()
+	s.setIPOptionsLocked(options)
+	s.ipOptionsLoading = false
+	cached := cloneIPOptions(s.ipOptions)
+	s.mu.Unlock()
+	return cached
+}
+
+func (s *IPSelector) setIPOptionsLocked(options []IPOption) {
+	s.ipOptions = cloneIPOptions(options)
+	s.ipOptionsLoaded = len(options) > 0
+	s.ipCategories = make(map[string]string, len(options))
+	for _, option := range options {
+		if _, exists := s.ipCategories[option.IP]; !exists {
+			s.ipCategories[option.IP] = option.Category
+		}
+	}
+	if s.cachedBestIP != "" {
+		s.cachedBestCategory = s.categoryForIPLocked(s.cachedBestIP)
+	}
+}
+
+func (s *IPSelector) categoryForIPLocked(ip string) string {
+	if category, ok := s.ipCategories[ip]; ok && category != "" {
+		return category
+	}
+	for _, option := range defaultIPOptions() {
+		if option.IP == ip {
+			return option.Category
+		}
+	}
+	return customIPCategory
+}
+
+func cloneIPOptions(options []IPOption) []IPOption {
+	if options == nil {
+		return []IPOption{}
+	}
+	next := make([]IPOption, len(options))
+	copy(next, options)
+	return next
+}
+
+func (s *IPSelector) refreshBestIP(testUrl string) string {
+	s.mu.Lock()
+	// 如果已经在优选，直接返回空字符串或者等待（这里简化为返回，前端会轮询状态）
+	// 但是为了防止多个协程同时进入，我们需要检查 isSelecting
+	if s.isSelecting {
+		s.mu.Unlock()
+		// 简单的自旋等待，或者直接返回空让调用者重试
+		// 实际上 GetBestIP 的调用者通常会等待结果，所以这里我们应该等待
+		// 但为了避免复杂性，我们只让第一个进入的协程执行，其他协程等待 cachedBestIP 被赋值
+
+		// 轮询等待结果（最多等待30秒）
+		for i := 0; i < 60; i++ {
+			time.Sleep(500 * time.Millisecond)
+			s.mu.RLock()
+			if s.cachedBestIP != "" {
+				res := s.cachedBestIP
+				s.mu.RUnlock()
+				return res
+			}
+			if !s.isSelecting {
+				// 优选结束但没有结果？
+				s.mu.RUnlock()
+				return ""
+			}
+			s.mu.RUnlock()
+		}
+		return ""
+	}
+
+	// Double check cache
+	if s.cachedBestIP != "" {
+		s.mu.Unlock()
+		return s.cachedBestIP
+	}
+
+	s.isSelecting = true
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		s.isSelecting = false
+		s.mu.Unlock()
+	}()
+
+	// Fetch remote IPs
+	candidateOptions := s.getIPOptions(func() ([]IPOption, error) {
+		return fetchRemoteIPOptions(steamCDNDomain)
+	})
+	fmt.Printf("[IPSelector] Using %d candidate IPs\n", len(candidateOptions))
+
+	candidateIPs := ipOptionsToIPs(candidateOptions)
+	bestIP, speed := selectBestIP(candidateIPs, testUrl)
+
+	s.mu.Lock()
+	if bestIP != "" {
+		s.cachedBestIP = bestIP
+		s.cachedBestCategory = s.categoryForIPLocked(bestIP)
+		s.cachedSpeed = speed
+		s.lastCheck = time.Now()
+	}
+	result := s.cachedBestIP
+	s.mu.Unlock()
+
+	return result
+}
+
+func selectBestIP(ips []string, testUrl string) (string, float64) {
+	totalStart := time.Now() // 记录总开始时间
+	type result struct {
+		ip      string
+		latency time.Duration
+	}
+
+	fmt.Printf("[IPSelector] Starting ping test for %d IPs...\n", len(ips))
+
+	// 1. TCP Ping Test
+	results := make(chan result, len(ips))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	for _, ip := range ips {
+		go func(targetIP string) {
+			start := time.Now()
+			d := net.Dialer{Timeout: 1500 * time.Millisecond}
+			conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(targetIP, "80"))
+			if err == nil {
+				conn.Close()
+				latency := time.Since(start)
+				fmt.Printf("[IPSelector] Ping success: %s - %v\n", targetIP, latency)
+				select {
+				case results <- result{ip: targetIP, latency: latency}:
+				case <-ctx.Done():
+				}
+			}
+		}(ip)
+	}
+
+	var pingResults []result
+	for i := 0; i < len(ips); i++ {
+		select {
+		case res := <-results:
+			pingResults = append(pingResults, res)
+		case <-ctx.Done():
+			goto PING_DONE
+		}
+	}
+PING_DONE:
+
+	if len(pingResults) == 0 {
+		fmt.Println("[IPSelector] No reachable IP found via Ping")
+		return "", 0.0
+	}
+
+	// Sort by latency
+	sort.Slice(pingResults, func(i, j int) bool {
+		return pingResults[i].latency < pingResults[j].latency
+	})
+
+	fmt.Println("[IPSelector] --- All Ping Results (Sorted) ---")
+	for i, res := range pingResults {
+		fmt.Printf("  %d. %s: %v\n", i+1, res.ip, res.latency)
+	}
+	fmt.Println("[IPSelector] --------------------------------")
+
+	// Take top 5 for speed test
+	topCount := 5
+	if len(pingResults) < topCount {
+		topCount = len(pingResults)
+	}
+	topCandidates := pingResults[:topCount]
+
+	fmt.Printf("[IPSelector] Top %d IPs by latency: %v\n", topCount, topCandidates)
+
+	// 2. Download Speed Test
+	type speedResult struct {
+		ip    string
+		speed float64 // MB/s
+		err   error
+	}
+
+	speedResults := make(chan speedResult, topCount)
+	// Increase timeout to 30s for 5MB test
+	speedCtx, speedCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer speedCancel()
+
+	fmt.Println("[IPSelector] Starting download speed test...")
+
+	// 使用用户指定的测试链接
+	testUrl = "https://cdn.steamusercontent.com/ugc/1852675168601248369/F20C8BCDE3535FB6415810D1B0A3BD7B404E4346/"
+
+	for _, candidate := range topCandidates {
+		go func(ip string) {
+			speed, err := testDownloadSpeed(speedCtx, ip, testUrl)
+			select {
+			case speedResults <- speedResult{ip: ip, speed: speed, err: err}:
+			case <-speedCtx.Done():
+			}
+		}(candidate.ip)
+	}
+
+	var bestIP string
+	var maxSpeed float64 = -1
+
+	// 等待所有结果返回，而不是一旦找到一个就认为结束（虽然逻辑是选最快，但这里是等待所有协程完成）
+	// 注意：之前的逻辑是遍历 topCount 次，每次接收一个结果。
+	// 问题在于：如果超时了，goto SPEED_DONE，这时候可能已经打印了一些日志。
+	// 但实际上，打印 Best IP selected 的逻辑是在循环结束后。
+	// 日志重复的原因可能是：
+	// 1. 多个协程并发调用了 GetBestIP -> 导致多个 refreshBestIP 同时运行 (已修复)
+	// 2. 这里的循环逻辑有问题？
+	// 从用户日志看：
+	// [IPSelector] Best IP selected: 23.59.72.42 (Speed: 5.04 MB/s)  <-- 这里出现一次
+	// [IPSelector] 203.69.138.225 - Speed: 1.11 MB/s                 <-- 之后又打印了一个测速结果
+	// [IPSelector] Best IP selected: 23.59.72.59 (Speed: 6.05 MB/s)  <-- 又选出了一个更好的？
+
+	// 仔细看代码：
+	// 循环接收结果，每次接收到结果都会更新 maxSpeed 和 bestIP。
+	// 但是！之前的代码没有提前退出循环，而是接收完所有结果后才打印 Best IP。
+	// 等等，用户日志显示 Best IP 打印了两次，说明 refreshBestIP 被执行了两次！
+	// 第一次 Best IP 打印后，居然还有测速日志，然后又一次 Best IP。
+	// 这绝对是并发进入了 refreshBestIP。
+
+	// 我们之前加的锁逻辑：
+	// s.mu.Lock(); if s.isSelecting { ... }
+	// 这段代码是我刚才加上去的。
+	// 在用户遇到问题的时候，这段代码还不在。
+	// 所以，刚才的修复（防止重入）应该已经解决了这个问题。
+
+	for i := 0; i < topCount; i++ {
+		select {
+		case res := <-speedResults:
+			if res.err != nil {
+				fmt.Printf("[IPSelector] Speed test failed for %s: %v\n", res.ip, res.err)
+				continue
+			}
+			fmt.Printf("[IPSelector] %s - Speed: %.2f MB/s\n", res.ip, res.speed)
+			if res.speed > maxSpeed {
+				maxSpeed = res.speed
+				bestIP = res.ip
+			}
+		case <-speedCtx.Done():
+			goto SPEED_DONE
+		}
+	}
+SPEED_DONE:
+
+	totalDuration := time.Since(totalStart)
+	if bestIP != "" {
+		fmt.Printf("[IPSelector] Best IP selected: %s (Speed: %.2f MB/s)\n", bestIP, maxSpeed)
+		fmt.Printf("[IPSelector] Total selection time: %v\n", totalDuration)
+		return bestIP, maxSpeed
+	}
+
+	// Fallback to lowest latency if speed test failed for all
+	fmt.Printf("[IPSelector] Speed test failed for all, falling back to lowest latency: %s\n", topCandidates[0].ip)
+	fmt.Printf("[IPSelector] Total selection time: %v\n", totalDuration)
+	return topCandidates[0].ip, 0.0
+}
+
+func testDownloadSpeed(ctx context.Context, ip string, downloadUrl string) (float64, error) {
+	u, err := url.Parse(downloadUrl)
+	if err != nil {
+		return 0, err
+	}
+
+	dialer := &net.Dialer{
+		Timeout:   5 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// Force connection to specific IP
+			_, port, _ := net.SplitHostPort(addr)
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ip, port))
+		},
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
+		DisableKeepAlives:     true, // 禁用连接复用，确保每次都是新连接
+	}
+
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   20 * time.Second,
+	}
+
+	// === 预热阶段：下载64KB建立连接（不计入测速） ===
+	warmupReq, err := http.NewRequestWithContext(ctx, "GET", downloadUrl, nil)
+	if err != nil {
+		return 0, err
+	}
+	warmupReq.Header.Set("Range", "bytes=0-65535") // 64KB warmup
+	warmupReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	warmupReq.Header.Set("Host", u.Host)
+
+	warmupStart := time.Now()
+	warmupResp, err := client.Do(warmupReq)
+	if err != nil {
+		fmt.Printf("[IPSelector] Warmup failed for %s: %v\n", ip, err)
+		return 0, err
+	}
+	io.Copy(io.Discard, warmupResp.Body)
+	warmupResp.Body.Close()
+	warmupDuration := time.Since(warmupStart)
+	fmt.Printf("[IPSelector] Warmup for %s: 64KB in %v (connect+transfer)\n", ip, warmupDuration)
+
+	// === 正式测速：下载512KB（只计算传输时间） ===
+	testStart := time.Now()
+	testReq, err := http.NewRequestWithContext(ctx, "GET", downloadUrl, nil)
+	if err != nil {
+		return 0, err
+	}
+	testReq.Header.Set("Range", "bytes=65536-589823") // 512KB after warmup (65536 + 524288 - 1)
+	testReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	testReq.Header.Set("Host", u.Host)
+
+	testResp, err := client.Do(testReq)
+	if err != nil {
+		fmt.Printf("[IPSelector] Test request failed for %s: %v\n", ip, err)
+		return 0, err
+	}
+	defer testResp.Body.Close()
+
+	if testResp.StatusCode != http.StatusOK && testResp.StatusCode != http.StatusPartialContent {
+		return 0, fmt.Errorf("bad status: %d", testResp.StatusCode)
+	}
+
+	// Read body to measure throughput
+	written, err := io.Copy(io.Discard, testResp.Body)
+	if err != nil {
+		return 0, err
+	}
+
+	testDuration := time.Since(testStart)
+	if testDuration == 0 {
+		testDuration = 1 * time.Millisecond
+	}
+
+	speedMBps := float64(written) / 1024 / 1024 / testDuration.Seconds()
+	fmt.Printf("[IPSelector] Test result for %s: %d bytes in %v = %.2f MB/s (pure transfer speed)\n", ip, written, testDuration, speedMBps)
+
+	return speedMBps, nil
+}
+
+// CalculateThreadCount determines the number of parallel download workers.
+// With dynamic 5MB blocks, worker count is capped by the number of blocks
+// (no point spawning more workers than there are tasks).
+func CalculateThreadCount(fileSize int64, maxThreads int) int {
+	if maxThreads <= 0 {
+		maxThreads = 8
+	}
+
+	const blockSize = 5 * 1024 * 1024
+	if fileSize < blockSize {
+		return 1
+	}
+
+	numBlocks := int((fileSize + blockSize - 1) / blockSize)
+	return min(maxThreads, numBlocks)
+}

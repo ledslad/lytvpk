@@ -1,0 +1,14 @@
+build/bin
+node_modules
+docs/node_modules
+docs/.vitepress/cache
+docs/.vitepress/dist
+frontend/dist/*
+!frontend/dist/.gitkeep
+*.vpk
+*.exe
+.claude
+.codex
+.omo
+.codegraph
+.zcode
