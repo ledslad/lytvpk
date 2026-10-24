@@ -1,6 +1,6 @@
 import { COMMUNITY_SERVER_PRESETS, formatSyncBytes, normalizeSyncSource } from "./presets.js";
 
-const COMMUNITY_STATUS_PAGE = "https://l4d2.fastbot.top/servers";
+const COMMUNITY_GUIDE_PAGE = "https://l4d2.fastbot.top/server-guide";
 const mountedViews = new WeakMap();
 
 function element(tag, className, text) {
@@ -92,7 +92,7 @@ function createCommunityView(parent, services) {
   brand.append(brandMark, brandCopy);
   const statusActions = element("div", "community-sync-actions safehouse-header-actions");
   const refresh = withIcon(button("刷新状态", () => refreshStatuses()), "refresh");
-  statusActions.append(refresh, withIcon(button("网站状态页", () => BrowserOpenURL(COMMUNITY_STATUS_PAGE)), "external"));
+  statusActions.append(refresh, withIcon(button("服务器说明", () => BrowserOpenURL(COMMUNITY_GUIDE_PAGE)), "external"));
   heading.append(brand, statusActions);
   const cards = element("div", "community-server-cards");
   const statusViews = new Map();
