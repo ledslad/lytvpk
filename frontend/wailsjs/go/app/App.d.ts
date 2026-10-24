@@ -29,6 +29,8 @@ export function ClearCompletedTasks():Promise<void>;
 
 export function ClearPanelMaps(arg1:string):Promise<string>;
 
+export function ClearServerMapSyncTrash(arg1:string):Promise<app.ServerMapSyncTrashResult>;
+
 export function ClearWorkshopHistory():Promise<void>;
 
 export function ConnectToServer(arg1:string):Promise<void>;
@@ -206,6 +208,8 @@ export function ParseMDMPFile(arg1:string):Promise<minidump.Report>;
 export function ParseWorkshopID(arg1:string):Promise<string>;
 
 export function PreviewServerMapSync():Promise<app.ServerMapSyncPreview>;
+
+export function PreviewServerMapSyncTrash():Promise<app.ServerMapSyncTrashPreview>;
 
 export function PreviewSnapshotRestore(arg1:string):Promise<app.SnapshotRestorePlan>;
 

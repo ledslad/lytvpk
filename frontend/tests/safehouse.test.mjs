@@ -56,7 +56,7 @@ async function fixture(t) {
   page.className = "page-view";
   const parent = new Node("div");
   page.append(parent);
-  const state = { config: { mapSyncServer: "cd.fastbot.top" }, root: "D:/Game/addons", started: [], connected: [], statusCalls: 0 };
+  const state = { config: { mapSyncServer: "cd.fastbot.top" }, root: "D:/Game/addons", started: [], connected: [], statusCalls: 0, cleared: [], confirmation: null };
   const services = {
     getConfig: () => state.config,
     saveConfig: async (patch) => Object.assign(state.config, patch),
@@ -73,6 +73,9 @@ async function fixture(t) {
     }),
     StartServerMapSync: async (...args) => { state.started.push(args); return { queued: 1, quarantined: 0 }; },
     RestoreLastServerMapSync: async () => 1,
+    PreviewServerMapSyncTrash: async () => state.trash || ({ id: "trash-1", directory: state.root, maps: 2, files: 4, bytes: 1024, batches: 1, skipped: 0 }),
+    ClearServerMapSyncTrash: async (id) => { state.cleared.push(id); return { files: 4, bytes: 1024, errors: [] }; },
+    showConfirmModal: (title, message, confirm) => { state.confirmation = { title, message, confirm }; },
     switchAppPage: () => {}, BrowserOpenURL: () => {},
   };
   const mounted = mountSafehouseView(parent, services);
@@ -85,50 +88,73 @@ async function fixture(t) {
 
 test("safehouse requires a preview and keeps cleanup optional with folded details", async (t) => {
   const { parent, state, button, message } = await fixture(t);
-  assert.equal(button("执行同步").disabled, true);
-  await button("执行同步").emit("click");
+  assert.equal(button("同步地图").disabled, true);
+  await button("同步地图").emit("click");
   assert.equal(state.started.length, 0);
-  await button("预览地图同步").emit("click");
-  assert.equal(button("执行同步").disabled, false);
+  await button("预览变更").emit("click");
+  assert.equal(button("同步地图").disabled, false);
   const details = findAll(parent, (node) => node.tagName === "details");
   assert.equal(details.length, 2);
   assert.ok(details.every((node) => !node.open));
   const cleanup = findAll(parent, (node) => node.type === "checkbox")[0];
   cleanup.checked = false;
-  await button("执行同步").emit("click");
+  await button("同步地图").emit("click");
   assert.deepEqual(state.started, [["preview-1", false]]);
-  assert.equal(button("执行同步").disabled, true);
+  assert.equal(button("同步地图").disabled, true);
   assert.match(message.textContent, /提交不等于下载完成/);
 });
 
 test("editing the source invalidates the preview until the new source is saved", async (t) => {
   const { state, source, button } = await fixture(t);
-  await button("预览地图同步").emit("click");
+  await button("预览变更").emit("click");
   source.value = "https://example.org";
   await source.emit("input");
-  assert.equal(button("执行同步").disabled, true);
-  assert.equal(button("预览地图同步").disabled, true);
+  assert.equal(button("同步地图").disabled, true);
+  assert.equal(button("预览变更").disabled, true);
   await button("保存").emit("click");
   assert.equal(state.config.mapSyncServer, "example.org");
-  assert.equal(button("预览地图同步").disabled, false);
-  assert.equal(button("执行同步").disabled, true);
+  assert.equal(button("预览变更").disabled, false);
+  assert.equal(button("同步地图").disabled, true);
 });
 
 test("changing addons directory invalidates the previous preview", async (t) => {
   const { state, mounted, button } = await fixture(t);
-  await button("预览地图同步").emit("click");
+  await button("预览变更").emit("click");
   state.root = "E:/OtherGame/addons";
   await mounted.updateContext();
-  assert.equal(button("执行同步").disabled, true);
+  assert.equal(button("同步地图").disabled, true);
 });
 
 test("restoring isolated maps clears the old plan and reports the restored count", async (t) => {
   const { parent, button, message } = await fixture(t);
-  await button("预览地图同步").emit("click");
+  await button("预览变更").emit("click");
   await button("恢复上次清理").emit("click");
-  assert.equal(button("执行同步").disabled, true);
+  assert.equal(button("同步地图").disabled, true);
   assert.match(message.textContent, /已恢复 1 张地图/);
   assert.equal(findAll(parent, (node) => node.tagName === "details").length, 0);
+});
+
+test("emptying the map recycle bin requires explicit confirmation and invalidates the preview", async (t) => {
+  const { state, button, message } = await fixture(t);
+  await button("预览变更").emit("click");
+  await button("清空回收站").emit("click");
+  assert.deepEqual(state.cleared, []);
+  assert.match(state.confirmation.message, /永久删除 2 张地图/);
+  assert.match(state.confirmation.message, /无法恢复/);
+  await state.confirmation.confirm();
+  assert.deepEqual(state.cleared, ["trash-1"]);
+  assert.equal(button("同步地图").disabled, true);
+  assert.match(message.textContent, /已清理 4 个文件/);
+});
+
+test("an empty recycle bin does not ask for deletion confirmation", async (t) => {
+  const { state, button, message } = await fixture(t);
+  state.trash = { id: "empty", batches: 0, files: 0, skipped: 1 };
+  await button("清空回收站").emit("click");
+  assert.deepEqual(state.cleared, []);
+  assert.equal(state.confirmation, null);
+  assert.match(message.textContent, /回收站为空/);
+  assert.match(message.textContent, /已保留 1 个/);
 });
 
 test("status refresh belongs to the safehouse page and server connections remain separate", async (t) => {
@@ -143,7 +169,7 @@ test("status refresh belongs to the safehouse page and server connections remain
   page.className = "page-view";
   timer.callback();
   assert.equal(state.statusCalls, 1);
-  const connect = findAll(parent, (node) => node.tagName === "button" && node.textContent === "连接服务器");
+  const connect = findAll(parent, (node) => node.tagName === "button" && node.textContent === "加入服务器");
   await connect[0].emit("click");
   await connect[1].emit("click");
   assert.deepEqual(state.connected, ["cd.fastbot.top", "gd.fastbot.top"]);

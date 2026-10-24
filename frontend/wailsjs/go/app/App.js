@@ -50,6 +50,10 @@ export function ClearPanelMaps(arg1) {
   return window['go']['app']['App']['ClearPanelMaps'](arg1);
 }
 
+export function ClearServerMapSyncTrash(arg1) {
+  return window['go']['app']['App']['ClearServerMapSyncTrash'](arg1);
+}
+
 export function ClearWorkshopHistory() {
   return window['go']['app']['App']['ClearWorkshopHistory']();
 }
@@ -404,6 +408,10 @@ export function ParseWorkshopID(arg1) {
 
 export function PreviewServerMapSync() {
   return window['go']['app']['App']['PreviewServerMapSync']();
+}
+
+export function PreviewServerMapSyncTrash() {
+  return window['go']['app']['App']['PreviewServerMapSyncTrash']();
 }
 
 export function PreviewSnapshotRestore(arg1) {

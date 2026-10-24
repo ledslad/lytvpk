@@ -5,7 +5,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"strings"
 	"time"
 
@@ -178,16 +177,6 @@ func (m *SingletonManager) Close() error {
 		return m.listener.Close()
 	}
 	return nil
-}
-
-// EnsureSingleton 确保单例运行
-// 如果不是第一个实例，会发送参数给已有实例并退出
-func EnsureSingleton(args []string) bool {
-	if !IsFirstInstance(args) {
-		// 不是第一个实例，已经发送参数给已有实例，应该退出
-		os.Exit(0)
-	}
-	return true
 }
 
 // HandleStartupArgs 处理启动时的命令行参数

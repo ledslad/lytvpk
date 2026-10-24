@@ -439,6 +439,8 @@ func quarantineSyncMaps(root string, files []ServerSyncLocal) (string, int, erro
 func (a *App) RestoreLastServerMapSync() (int, error) {
 	a.mapSyncMu.Lock()
 	defer a.mapSyncMu.Unlock()
+	syncFinalizeMu.Lock()
+	defer syncFinalizeMu.Unlock()
 	if a.HasActiveDownloads() {
 		return 0, errors.New("下载进行中，请等待完成或取消并停止任务后再恢复")
 	}

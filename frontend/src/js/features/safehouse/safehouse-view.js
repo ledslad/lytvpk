@@ -19,6 +19,7 @@ const ICON_PATHS = {
   sync: ["M12 3v12", "m7 10 5 5 5-5", "M4 16v5h16v-5"],
   folder: ["M3 7V5h6l2 2h10v13H3z"],
   restore: ["M3 5v6h6", "M3 11a9 9 0 1 1 2.5 8", "M12 7v5l3 2"],
+  trash: ["M3 6h18", "M9 6V3h6v3", "M5 6l1 15h12l1-15", "M10 10v7", "M14 10v7"],
   shield: ["m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6z", "m8 12 3 3 5-6"],
 };
 
@@ -75,6 +76,7 @@ function createCommunityView(parent, services) {
   const {
     ConnectToServer, GetCommunityServerStatuses, GetRootDirectory,
     PreviewServerMapSync, StartServerMapSync, RestoreLastServerMapSync,
+    PreviewServerMapSyncTrash, ClearServerMapSyncTrash, showConfirmModal,
     getConfig, saveConfig, switchAppPage, BrowserOpenURL,
   } = services;
   const view = element("section", "community-sync-view");
@@ -85,7 +87,7 @@ function createCommunityView(parent, services) {
   const brandCopy = element("div", "safehouse-brand-copy");
   brandCopy.append(
     element("h2", "", "麻衣安全屋"),
-    element("p", "", "连接服务器，让本机地图与服务器保持同步。"),
+    element("p", "", "加入服务器，让本机地图与服务器保持同步。"),
   );
   brand.append(brandMark, brandCopy);
   const statusActions = element("div", "community-sync-actions safehouse-header-actions");
@@ -112,7 +114,7 @@ function createCommunityView(parent, services) {
     const address = element("div", "community-server-address");
     const info = element("div", "community-server-info", "");
     address.append(element("code", "", preset.address), info);
-    const connect = button("连接服务器", async () => {
+    const connect = button("加入服务器", async () => {
       connect.disabled = true;
       try { await ConnectToServer(preset.address); }
       catch (error) { info.textContent = `连接失败：${String(error?.message || error)}`; }
@@ -154,18 +156,20 @@ function createCommunityView(parent, services) {
   const directoryRow = element("div", "safehouse-directory");
   const directory = element("p", "community-sync-directory");
   directoryRow.append(icon("folder"), directory);
-  const note = element("p", "community-sync-note", "仅按服务器明确的删除记录隔离备份，其他 MOD 不受影响。");
+  const note = element("p", "community-sync-note", "旧地图移入 addons/disabled/server-sync-*，可恢复；清空回收站后将永久删除。其他 MOD 不受影响。");
   const toolbar = element("div", "safehouse-sync-toolbar");
   const actions = element("div", "community-sync-actions");
   const secondaryActions = element("div", "community-sync-actions safehouse-secondary-actions");
-  const preview = withIcon(button("预览地图同步", () => previewSync(), true), "sync");
-  const apply = button("执行同步", () => applySync());
+  const preview = withIcon(button("预览变更", () => previewSync(), true), "sync");
+  const apply = button("同步地图", () => applySync());
   apply.classList.add("safehouse-apply");
   apply.disabled = true;
   const restore = withIcon(button("恢复上次清理", () => restoreSync()), "restore");
+  const emptyTrash = withIcon(button("清空回收站", () => clearTrash()), "trash");
+  emptyTrash.classList.add("safehouse-empty-trash");
   const downloads = button("查看下载任务", () => switchAppPage("downloads"));
   actions.append(preview, apply);
-  secondaryActions.append(restore, downloads);
+  secondaryActions.append(restore, emptyTrash, downloads);
   toolbar.append(actions, secondaryActions);
   const cleanupLabel = element("label", "community-sync-checkbox");
   const cleanup = element("input");
@@ -198,6 +202,7 @@ function createCommunityView(parent, services) {
     busy = value;
     preview.disabled = value || sourceIsDirty();
     restore.disabled = value;
+    emptyTrash.disabled = value;
     settings.disabled = value;
     source.disabled = value;
     cleanup.disabled = value;
@@ -350,6 +355,41 @@ function createCommunityView(parent, services) {
       lists.replaceChildren();
       message.textContent = `已恢复 ${Number(count) || 0} 张地图。可重新预览同步，或返回 MOD 列表刷新。`;
       message.dataset.state = "success";
+    } catch (error) { fail(error); }
+    finally { setBusy(false); }
+  }
+
+  async function clearTrash() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const trash = await PreviewServerMapSyncTrash();
+      if (!trash?.id) throw new Error("未获得有效的回收站预览");
+      const skipped = trash.skipped ? ` 已保留 ${trash.skipped} 个无法确认内容的目录。` : "";
+      if (!trash.batches) {
+        message.textContent = `地图同步回收站为空。${skipped}`;
+        message.dataset.state = "";
+        return;
+      }
+      showConfirmModal(
+        "清空地图同步回收站？",
+        `将永久删除 ${trash.maps || 0} 张地图及关联文件（共 ${trash.files || 0} 个文件，约 ${formatSyncBytes(trash.bytes)}）。范围：${trash.directory}/disabled/server-sync-*。清空后无法恢复，其他禁用 MOD 不受影响。${skipped}`,
+        async () => {
+          if (busy) return false;
+          setBusy(true);
+          try {
+            const result = await ClearServerMapSyncTrash(trash.id);
+            invalidatePlan();
+            lists.replaceChildren();
+            const errors = Array.isArray(result.errors) ? result.errors : [];
+            message.textContent = `已清理 ${result.files || 0} 个文件，释放约 ${formatSyncBytes(result.bytes)}。${skipped}${errors.length ? ` 部分文件未清理：${errors.join("；")}` : ""}`;
+            message.dataset.state = errors.length ? "error" : "success";
+          } catch (error) {
+            invalidatePlan();
+            fail(error);
+          } finally { setBusy(false); }
+        },
+      );
     } catch (error) { fail(error); }
     finally { setBusy(false); }
   }

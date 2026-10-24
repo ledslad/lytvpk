@@ -1036,6 +1036,46 @@ export namespace app {
 	        this.errors = source["errors"];
 	    }
 	}
+	export class ServerMapSyncTrashPreview {
+	    id: string;
+	    directory: string;
+	    maps: number;
+	    files: number;
+	    bytes: number;
+	    batches: number;
+	    skipped: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new ServerMapSyncTrashPreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.directory = source["directory"];
+	        this.maps = source["maps"];
+	        this.files = source["files"];
+	        this.bytes = source["bytes"];
+	        this.batches = source["batches"];
+	        this.skipped = source["skipped"];
+	    }
+	}
+	export class ServerMapSyncTrashResult {
+	    files: number;
+	    bytes: number;
+	    errors: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new ServerMapSyncTrashResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.files = source["files"];
+	        this.bytes = source["bytes"];
+	        this.errors = source["errors"];
+	    }
+	}
 	export class ServerStorage {
 	    servers: SavedServer[];
 	    recentServers: RecentServer[];

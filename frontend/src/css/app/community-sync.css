@@ -68,6 +68,7 @@
 .community-sync-view .btn:disabled { background: var(--safehouse-soft); border-color: var(--safehouse-border); color: var(--text-muted); box-shadow: none; opacity: 1; cursor: not-allowed; }
 .community-sync-view :is(button, input, summary):focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .community-sync-view .safehouse-header-actions .btn { min-height: 35px; padding: 8px 11px; background: transparent; box-shadow: none; }
+.community-sync-view .safehouse-empty-trash:hover:not(:disabled) { color: var(--danger); border-color: currentColor; }
 .safehouse-header-actions .safehouse-icon { width: 15px; height: 15px; }
 .community-server-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .community-server-card,
