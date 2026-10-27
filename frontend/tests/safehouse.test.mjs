@@ -139,7 +139,7 @@ test("emptying the map recycle bin requires explicit confirmation and invalidate
   await button("预览变更").emit("click");
   await button("清空回收站").emit("click");
   assert.deepEqual(state.cleared, []);
-  assert.match(state.confirmation.message, /永久删除 2 张地图/);
+  assert.match(state.confirmation.message, /永久删除 2 个地图 VPK/);
   assert.match(state.confirmation.message, /无法恢复/);
   await state.confirmation.confirm();
   assert.deepEqual(state.cleared, ["trash-1"]);
@@ -153,7 +153,7 @@ test("an empty recycle bin does not ask for deletion confirmation", async (t) =>
   await button("清空回收站").emit("click");
   assert.deepEqual(state.cleared, []);
   assert.equal(state.confirmation, null);
-  assert.match(message.textContent, /回收站为空/);
+  assert.match(message.textContent, /没有可安全清理的文件/);
   assert.match(message.textContent, /已保留 1 个/);
 });
 
@@ -173,4 +173,16 @@ test("status refresh belongs to the safehouse page and server connections remain
   await connect[0].emit("click");
   await connect[1].emit("click");
   assert.deepEqual(state.connected, ["cd.fastbot.top", "gd.fastbot.top"]);
+});
+
+test("recycle bin reports skipped batches without claiming success or touching manual disabled files", async (t) => {
+  const { state, button, message } = await fixture(t);
+  state.trash = { id: "partial", batches: 1, files: 2, maps: 1, skipped: 1, skipped_reasons: ["server-sync-broken: 无效的地图恢复记录"] };
+  await button("清空回收站").emit("click");
+  assert.deepEqual(state.cleared, []);
+  assert.match(state.confirmation.message, /手动禁用的文件不受影响/);
+  assert.match(state.confirmation.message, /server-sync-broken/);
+  await state.confirmation.confirm();
+  assert.equal(message.dataset.state, "error");
+  assert.match(message.textContent, /无效的地图恢复记录/);
 });

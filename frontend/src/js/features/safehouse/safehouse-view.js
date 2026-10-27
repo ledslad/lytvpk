@@ -156,7 +156,7 @@ function createCommunityView(parent, services) {
   const directoryRow = element("div", "safehouse-directory");
   const directory = element("p", "community-sync-directory");
   directoryRow.append(icon("folder"), directory);
-  const note = element("p", "community-sync-note", "旧地图移入 addons/disabled/server-sync-*，可恢复；清空回收站后将永久删除。其他 MOD 不受影响。");
+  const note = element("p", "community-sync-note", "旧地图及资源分卷移入 addons/disabled/server-sync-*，可恢复；清空只删除这些同步备份，手动禁用的文件不受影响。");
   const toolbar = element("div", "safehouse-sync-toolbar");
   const actions = element("div", "community-sync-actions");
   const secondaryActions = element("div", "community-sync-actions safehouse-secondary-actions");
@@ -366,14 +366,15 @@ function createCommunityView(parent, services) {
       const trash = await PreviewServerMapSyncTrash();
       if (!trash?.id) throw new Error("未获得有效的回收站预览");
       const skipped = trash.skipped ? ` 已保留 ${trash.skipped} 个无法确认内容的目录。` : "";
+      const reasons = Array.isArray(trash.skipped_reasons) ? trash.skipped_reasons.join("；") : "";
       if (!trash.batches) {
-        message.textContent = `地图同步回收站为空。${skipped}`;
-        message.dataset.state = "";
+        message.textContent = trash.skipped ? `没有可安全清理的文件。${skipped}${reasons}` : "地图同步回收站为空。";
+        message.dataset.state = trash.skipped ? "error" : "";
         return;
       }
       showConfirmModal(
         "清空地图同步回收站？",
-        `将永久删除 ${trash.maps || 0} 张地图及关联文件（共 ${trash.files || 0} 个文件，约 ${formatSyncBytes(trash.bytes)}）。范围：${trash.directory}/disabled/server-sync-*。清空后无法恢复，其他禁用 MOD 不受影响。${skipped}`,
+        `将永久删除 ${trash.maps || 0} 个地图 VPK 及关联文件（共 ${trash.files || 0} 个文件，约 ${formatSyncBytes(trash.bytes)}）。范围：${trash.directory}/disabled/server-sync-* 中有有效恢复记录的同步备份。清空后无法恢复，手动禁用的文件不受影响。${skipped}${reasons}`,
         async () => {
           if (busy) return false;
           setBusy(true);
@@ -382,8 +383,8 @@ function createCommunityView(parent, services) {
             invalidatePlan();
             lists.replaceChildren();
             const errors = Array.isArray(result.errors) ? result.errors : [];
-            message.textContent = `已清理 ${result.files || 0} 个文件，释放约 ${formatSyncBytes(result.bytes)}。${skipped}${errors.length ? ` 部分文件未清理：${errors.join("；")}` : ""}`;
-            message.dataset.state = errors.length ? "error" : "success";
+            message.textContent = `已清理 ${result.files || 0} 个文件，释放约 ${formatSyncBytes(result.bytes)}。${skipped}${reasons}${errors.length ? ` 部分文件未清理：${errors.join("；")}` : ""}`;
+            message.dataset.state = errors.length || trash.skipped ? "error" : "success";
           } catch (error) {
             invalidatePlan();
             fail(error);

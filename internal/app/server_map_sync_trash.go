@@ -13,13 +13,14 @@ import (
 )
 
 type ServerMapSyncTrashPreview struct {
-	ID        string `json:"id"`
-	Directory string `json:"directory"`
-	Maps      int    `json:"maps"`
-	Files     int    `json:"files"`
-	Bytes     int64  `json:"bytes"`
-	Batches   int    `json:"batches"`
-	Skipped   int    `json:"skipped"`
+	ID             string   `json:"id"`
+	Directory      string   `json:"directory"`
+	Maps           int      `json:"maps"`
+	Files          int      `json:"files"`
+	Bytes          int64    `json:"bytes"`
+	Batches        int      `json:"batches"`
+	Skipped        int      `json:"skipped"`
+	SkippedReasons []string `json:"skipped_reasons"`
 }
 
 type ServerMapSyncTrashResult struct {
@@ -130,6 +131,7 @@ func scanSyncTrash(root string) (ServerMapSyncTrashPreview, []syncTrashBatch, er
 			batch, err := readSyncTrashBatch(filepath.Join(disabled, entry.Name()))
 			if err != nil {
 				preview.Skipped++
+				preview.SkippedReasons = append(preview.SkippedReasons, entry.Name()+": "+err.Error())
 				continue
 			}
 			batches = append(batches, batch)

@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"vpk-manager/internal/parser"
 	"vpk-manager/internal/platform/protocol"
 )
 
@@ -186,7 +185,26 @@ func syncIdentity(file ServerSyncLocal, id, workshop string) bool {
 	return (id != "" && strings.EqualFold(strings.TrimSuffix(file.Name, filepath.Ext(file.Name)), id)) || (workshop != "" && file.WorkshopID == workshop)
 }
 
-func buildSyncPlan(server, root string, manifest serverSyncManifest, local []ServerSyncLocal, isMap func(string) bool) serverMapSyncPlan {
+func syncFileRemoved(file ServerSyncLocal, manifest serverSyncManifest) bool {
+	for _, remote := range manifest.Maps {
+		if syncIdentity(file, remote.ID, remote.WorkshopID) {
+			return false
+		}
+		for _, id := range remote.WorkshopIDs {
+			if id != "" && id == file.WorkshopID {
+				return false
+			}
+		}
+	}
+	for _, record := range manifest.Items {
+		if record.Status == "removed" && !record.HasErrors && syncIdentity(file, record.ID, record.WorkshopID) {
+			return true
+		}
+	}
+	return false
+}
+
+func buildSyncPlan(server, root string, manifest serverSyncManifest, local []ServerSyncLocal) serverMapSyncPlan {
 	plan := serverMapSyncPlan{ServerMapSyncPreview: ServerMapSyncPreview{Server: server, Directory: root, Missing: []ServerSyncMap{}, Unresolved: []ServerSyncMap{}, Cleanup: []ServerSyncLocal{}}, Snapshot: manifest.SnapshotID, Created: time.Now()}
 	for _, remote := range manifest.Maps {
 		present := false
@@ -208,25 +226,10 @@ func buildSyncPlan(server, root string, manifest serverSyncManifest, local []Ser
 		}
 	}
 	for _, file := range local {
-		protected := false
-		for _, remote := range manifest.Maps {
-			if syncIdentity(file, remote.ID, remote.WorkshopID) {
-				protected = true
-			}
-			for _, id := range remote.WorkshopIDs {
-				if id != "" && id == file.WorkshopID {
-					protected = true
-				}
-			}
-		}
-		if protected {
-			continue
-		}
-		for _, record := range manifest.Items {
-			if record.Status == "removed" && !record.HasErrors && syncIdentity(file, record.ID, record.WorkshopID) && isMap(filepath.Join(root, file.Name)) {
-				plan.Cleanup = append(plan.Cleanup, file)
-				break
-			}
+		// Resource parts often have no missions/chapter metadata. The explicit
+		// per-file deletion record, not VPK content classification, proves scope.
+		if syncFileRemoved(file, manifest) {
+			plan.Cleanup = append(plan.Cleanup, file)
 		}
 	}
 	// Include local file fingerprints so a changed directory invalidates approval.
@@ -267,10 +270,7 @@ func (a *App) makeSyncPlan() (serverMapSyncPlan, error) {
 	if err != nil {
 		return serverMapSyncPlan{}, err
 	}
-	return buildSyncPlan(server, root, manifest, local, func(path string) bool {
-		file, err := parser.ParseVPKFile(path)
-		return err == nil && file.PrimaryTag == "地图" && len(file.Chapters) > 0
-	}), nil
+	return buildSyncPlan(server, root, manifest, local), nil
 }
 
 func (a *App) PreviewServerMapSync() (ServerMapSyncPreview, error) {

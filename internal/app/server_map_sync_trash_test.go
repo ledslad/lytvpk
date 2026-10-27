@@ -172,3 +172,34 @@ func TestSyncTrashDoesNotDeleteWhileDownloadWorkerIsActive(t *testing.T) {
 		t.Fatal("backup deleted during download", err)
 	}
 }
+
+func TestSyncDoesNotTreatManuallyDisabledPartsAsRecycleBin(t *testing.T) {
+	root := t.TempDir()
+	disabled := filepath.Join(root, "disabled")
+	if err := os.Mkdir(disabled, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"123456782.vpk", "123456782.meta", "123456782.png"} {
+		if err := os.WriteFile(filepath.Join(disabled, name), []byte("manual disabled file"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	local, err := scanSyncLocal(root)
+	if err != nil || len(local) != 0 {
+		t.Fatal(local, err)
+	}
+	a := &App{rootDir: root}
+	preview, err := a.PreviewServerMapSyncTrash()
+	if err != nil || preview.Files != 0 || preview.Batches != 0 {
+		t.Fatal(preview, err)
+	}
+	result, err := a.ClearServerMapSyncTrash(preview.ID)
+	if err != nil || result.Files != 0 || len(result.Errors) != 0 {
+		t.Fatal(result, err)
+	}
+	for _, name := range []string{"123456782.vpk", "123456782.meta", "123456782.png"} {
+		if _, err := os.Stat(filepath.Join(disabled, name)); err != nil {
+			t.Fatal("manual file removed", name, err)
+		}
+	}
+}

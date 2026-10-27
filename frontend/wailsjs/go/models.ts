@@ -1044,6 +1044,7 @@ export namespace app {
 	    bytes: number;
 	    batches: number;
 	    skipped: number;
+	    skipped_reasons: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerMapSyncTrashPreview(source);
@@ -1058,6 +1059,7 @@ export namespace app {
 	        this.bytes = source["bytes"];
 	        this.batches = source["batches"];
 	        this.skipped = source["skipped"];
+	        this.skipped_reasons = source["skipped_reasons"];
 	    }
 	}
 	export class ServerMapSyncTrashResult {

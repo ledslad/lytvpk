@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -18,7 +17,7 @@ func TestMapSyncPlanProtectsInstalledDependenciesAndOnlyCleansExplicitMaps(t *te
 		{Name: "dependency.vpk", WorkshopID: "234567890", Size: 10},
 		{Name: "failed.vpk", WorkshopID: "345678901", Size: 10},
 		{Name: "unlisted.vpk", Size: 10},
-		{Name: "weapon.vpk", WorkshopID: "456789012", Size: 10},
+		{Name: "resource-part.vpk", WorkshopID: "456789012", Size: 10},
 	}
 	manifest := serverSyncManifest{SnapshotID: "snapshot", Maps: []ServerSyncMap{
 		{ID: "dependency", WorkshopID: "234567890", Size: 20},
@@ -28,17 +27,17 @@ func TestMapSyncPlanProtectsInstalledDependenciesAndOnlyCleansExplicitMaps(t *te
 		{ID: "old", WorkshopID: "123456789", Status: "removed"},
 		{ID: "dependency", WorkshopID: "234567890", Status: "removed"},
 		{ID: "failed", WorkshopID: "345678901", Status: "removed", HasErrors: true},
-		{ID: "weapon", WorkshopID: "456789012", Status: "removed"},
+		{ID: "resource-part", WorkshopID: "456789012", Status: "removed"},
 	}}
-	p := buildSyncPlan(defaultMapSyncServer, t.TempDir(), manifest, local, func(path string) bool { return !strings.HasSuffix(path, "weapon.vpk") })
-	if len(p.Cleanup) != 1 || p.Cleanup[0].Name != "old.vpk" {
+	p := buildSyncPlan(defaultMapSyncServer, t.TempDir(), manifest, local)
+	if len(p.Cleanup) != 2 || p.Cleanup[0].Name != "old.vpk" || p.Cleanup[1].Name != "resource-part.vpk" {
 		t.Fatalf("清理范围错误: %+v", p.Cleanup)
 	}
 	if len(p.Missing) != 2 || len(p.Unresolved) != 1 {
 		t.Fatalf("缺图识别错误: %+v", p)
 	}
 	manifest.Maps = append(manifest.Maps, ServerSyncMap{ID: "reinstalled", WorkshopID: "123456789", Size: 999})
-	p2 := buildSyncPlan(defaultMapSyncServer, p.Directory, manifest, local, func(string) bool { return true })
+	p2 := buildSyncPlan(defaultMapSyncServer, p.Directory, manifest, local)
 	for _, file := range p2.Cleanup {
 		if file.Name == "old.vpk" {
 			t.Fatal("已重新安装的图被清理")
@@ -152,5 +151,50 @@ func TestMapSyncSourcePersistsAndMigratesExistingConfig(t *testing.T) {
 	a.loadConfig()
 	if a.GetAppConfig().MapSyncServer != "gd.fastbot.top" {
 		t.Fatal("来源未持久化")
+	}
+}
+
+// Each part has its own explicit removal record; resource-only parts must not
+// depend on containing missions or chapters to be quarantined.
+func TestMapSyncRemovesAllExplicitPartsWithoutCampaignMetadata(t *testing.T) {
+	root := t.TempDir()
+	manifest := serverSyncManifest{SnapshotID: "parts", Maps: []ServerSyncMap{}}
+	for _, id := range []string{"123456781", "123456782", "123456783", "123456784"} {
+		if err := os.WriteFile(filepath.Join(root, id+".vpk"), []byte("resource part, no missions"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := SaveWorkshopMeta(filepath.Join(root, id+".vpk"), WorkshopFileDetails{PublishedFileId: id}); err != nil {
+			t.Fatal(err)
+		}
+		manifest.Items = append(manifest.Items, serverSyncDeleted{ID: id, WorkshopID: id, Status: "removed"})
+	}
+	local, err := scanSyncLocal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := buildSyncPlan(defaultMapSyncServer, root, manifest, local)
+	if len(plan.Cleanup) != 4 {
+		t.Fatalf("parts missed: %+v", plan.Cleanup)
+	}
+	_, count, err := quarantineSyncMaps(root, plan.Cleanup)
+	if err != nil || count != 4 {
+		t.Fatal(count, err)
+	}
+	a := &App{rootDir: root}
+	preview, err := a.PreviewServerMapSyncTrash()
+	if err != nil || preview.Maps != 4 || preview.Files != 8 {
+		t.Fatal(preview, err)
+	}
+	result, err := a.ClearServerMapSyncTrash(preview.ID)
+	if err != nil || result.Files != 8 || len(result.Errors) != 0 {
+		t.Fatal(result, err)
+	}
+	remaining, err := scanSyncLocal(root)
+	if err != nil || len(remaining) != 0 {
+		t.Fatal(remaining, err)
+	}
+	preview, err = a.PreviewServerMapSyncTrash()
+	if err != nil || preview.Files != 0 || preview.Skipped != 0 {
+		t.Fatal(preview, err)
 	}
 }
