@@ -209,7 +209,7 @@ func buildSyncPlan(server, root string, manifest serverSyncManifest, local []Ser
 	for _, remote := range manifest.Maps {
 		present := false
 		for _, file := range local {
-			if syncIdentity(file, remote.ID, remote.WorkshopID) && file.Size == remote.Size {
+			if syncIdentity(file, remote.ID, remote.WorkshopID) {
 				present = true
 				break
 			}
@@ -316,9 +316,6 @@ func (a *App) StartServerMapSync(planID string, cleanup bool) (ServerMapSyncResu
 		found := false
 		for _, item := range group.Groups {
 			if item.Main.PublishedFileId == remote.WorkshopID && item.Main.Result == 1 && item.Main.FileUrl != "" && strings.EqualFold(filepath.Ext(item.Main.Filename), ".vpk") {
-				if parseFileSize(item.Main.FileSize) != remote.Size {
-					return result, fmt.Errorf("%s 的工坊版本大小与服务器不同，未提交下载或清理", remote.Title)
-				}
 				details = append(details, item.Main)
 				found = true
 				break

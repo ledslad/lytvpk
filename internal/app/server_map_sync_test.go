@@ -33,7 +33,7 @@ func TestMapSyncPlanProtectsInstalledDependenciesAndOnlyCleansExplicitMaps(t *te
 	if len(p.Cleanup) != 2 || p.Cleanup[0].Name != "old.vpk" || p.Cleanup[1].Name != "resource-part.vpk" {
 		t.Fatalf("清理范围错误: %+v", p.Cleanup)
 	}
-	if len(p.Missing) != 2 || len(p.Unresolved) != 1 {
+	if p.Present != 1 || len(p.Missing) != 1 || len(p.Unresolved) != 1 {
 		t.Fatalf("缺图识别错误: %+v", p)
 	}
 	manifest.Maps = append(manifest.Maps, ServerSyncMap{ID: "reinstalled", WorkshopID: "123456789", Size: 999})
@@ -196,5 +196,25 @@ func TestMapSyncRemovesAllExplicitPartsWithoutCampaignMetadata(t *testing.T) {
 	preview, err = a.PreviewServerMapSyncTrash()
 	if err != nil || preview.Files != 0 || preview.Skipped != 0 {
 		t.Fatal(preview, err)
+	}
+}
+
+func TestMapSyncPresenceUsesIdentityWithoutServerSizeComparison(t *testing.T) {
+	local := []ServerSyncLocal{
+		{Name: "renamed.vpk", WorkshopID: "123456789", Size: 5},
+		{Name: "exact-map.vpk", Size: 9},
+		{Name: "unrelated.vpk", WorkshopID: "999999999", Size: 100},
+	}
+	manifest := serverSyncManifest{SnapshotID: "identity-only", Maps: []ServerSyncMap{
+		{ID: "remote-name", WorkshopID: "123456789", Size: 100},
+		{ID: "exact-map", Size: 200},
+		{ID: "missing", WorkshopID: "234567890", Size: 100},
+	}}
+	plan := buildSyncPlan(defaultMapSyncServer, t.TempDir(), manifest, local)
+	if plan.Present != 2 || len(plan.Missing) != 1 || plan.Missing[0].WorkshopID != "234567890" || len(plan.Unresolved) != 0 {
+		t.Fatalf("identity-only presence failed: %+v", plan)
+	}
+	if plan.Bytes != 100 {
+		t.Fatalf("display estimate changed: %d", plan.Bytes)
 	}
 }
