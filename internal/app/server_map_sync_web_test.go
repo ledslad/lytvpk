@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -125,7 +124,7 @@ func TestServerMapDownloadPreservesNameAndRejectsInvalidContentWithoutRestoringO
 	}
 }
 
-func TestServerMapRejectsUnsafeFilenameAndRequiresConfirmation(t *testing.T) {
+func TestServerMapRejectsUnsafeFilename(t *testing.T) {
 	for _, name := range []string{"../map.vpk", "CON.vpk", "a:map.vpk", "x\\map.vpk", "map.vpk ", "map.exe", "NUL.test.vpk"} {
 		if validServerMapFilename(name) {
 			t.Fatalf("unsafe name accepted: %s", name)
@@ -134,7 +133,31 @@ func TestServerMapRejectsUnsafeFilenameAndRequiresConfirmation(t *testing.T) {
 	if !validServerMapFilename("Broken hand.vpk") {
 		t.Fatal("valid name refused")
 	}
-	if _, err := (&App{}).StartServerMapSync("preview", true, false); err == nil || !strings.Contains(err.Error(), "确认") {
-		t.Fatal(err)
+}
+
+func TestServerMapConfirmationOnlyForMissingWebsiteMaps(t *testing.T) {
+	manual := ServerSyncMap{ID: "manual", Size: 100, DownloadURL: communityMapWebsite + "/d/manual.vpk"}
+	workshop := ServerSyncMap{ID: "workshop", WorkshopID: "123456789"}
+	for _, tc := range []struct {
+		name      string
+		missing   []ServerSyncMap
+		confirmed bool
+		wantError bool
+	}{
+		{"website", []ServerSyncMap{manual}, false, true},
+		{"mixed", []ServerSyncMap{workshop, manual}, false, true},
+		{"approved website", []ServerSyncMap{manual}, true, false},
+		{"workshop", []ServerSyncMap{workshop}, false, false},
+		{"no downloads", nil, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := serverMapSyncPlan{ServerMapSyncPreview: ServerMapSyncPreview{
+				Missing: tc.missing, Unresolved: []ServerSyncMap{manual},
+				Cleanup: []ServerSyncLocal{{Name: "old.vpk"}}, Present: 3,
+			}}
+			if err := requireServerMapSyncConfirmation(plan, tc.confirmed); (err != nil) != tc.wantError {
+				t.Fatalf("confirmation error = %v, want error %v", err, tc.wantError)
+			}
+		})
 	}
 }

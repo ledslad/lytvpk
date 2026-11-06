@@ -342,16 +342,21 @@ function createCommunityView(parent, services) {
     const id = currentPlan.id;
     const cleanupRequested = cleanup.checked;
     const missing = Array.isArray(currentPlan.missing) ? currentPlan.missing : [];
+    const websiteDownloads = missing.filter((item) => item.download_url);
+    if (websiteDownloads.length === 0) {
+      await executeSync(id, cleanupRequested, false);
+      return;
+    }
     const replacements = Array.isArray(currentPlan.replacements) ? currentPlan.replacements : [];
     const oldCount = cleanupRequested && Array.isArray(currentPlan.cleanup) ? currentPlan.cleanup.length : 0;
     showConfirmModal(
       "确认同步服务器地图？",
-      `将提交 ${missing.length} 个下载任务，其中 ${missing.filter((item) => item.download_url).length} 个从网站下载。先隔离 ${oldCount} 个服务器已删除的旧图及 ${replacements.length} 个大小不同的网站地图旧版，再开始下载。取消旧图清理也仍会隔离需要替换的网站地图旧版。下载失败不会自动还原，备份保留在 addons/disabled/server-sync-*，可自行恢复。若下载失败，请前往 ${COMMUNITY_MAP_WEBSITE} 手动下载。`,
-      () => executeSync(id, cleanupRequested),
+      `将提交 ${missing.length} 个下载任务，其中 ${websiteDownloads.length} 个从网站下载。先隔离 ${oldCount} 个服务器已删除的旧图及 ${replacements.length} 个大小不同的网站地图旧版，再开始下载。取消旧图清理也仍会隔离需要替换的网站地图旧版。下载失败不会自动还原，备份保留在 addons/disabled/server-sync-*，可自行恢复。若下载失败，请前往 ${COMMUNITY_MAP_WEBSITE} 手动下载。`,
+      () => executeSync(id, cleanupRequested, true),
     );
   }
 
-  async function executeSync(id, cleanupRequested) {
+  async function executeSync(id, cleanupRequested, confirmed) {
     if (busy) return false;
     if (currentPlan?.id !== id) {
       fail("预览已改变，请重新预览并确认同步。");
@@ -360,7 +365,7 @@ function createCommunityView(parent, services) {
     setBusy(true);
     message.textContent = "正在重新核对预览并提交下载任务…";
     try {
-      const result = await StartServerMapSync(id, cleanupRequested, true);
+      const result = await StartServerMapSync(id, cleanupRequested, confirmed);
       invalidatePlan();
       const destination = result.quarantine_directory ? `；恢复目录：${result.quarantine_directory}` : "";
       message.textContent = `已提交 ${result.queued || 0} 个下载任务，${result.already_queued || 0} 项已在队列；已隔离 ${result.quarantined || 0} 张地图${destination}。提交不等于下载完成，请在“查看下载任务”中检查结果。下载失败不会自动还原旧图，可到 ${COMMUNITY_MAP_WEBSITE} 手动下载。`;

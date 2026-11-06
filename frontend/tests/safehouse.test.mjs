@@ -99,17 +99,19 @@ test("safehouse requires a preview and keeps cleanup optional with folded detail
   const cleanup = findAll(parent, (node) => node.type === "checkbox")[0];
   cleanup.checked = false;
   await button("同步地图").emit("click");
-  assert.deepEqual(state.started, []);
-  assert.match(state.confirmation.message, /下载失败不会自动还原/);
-  assert.match(state.confirmation.message, /https:\/\/l4d2\.fastbot\.top\//);
-  await state.confirmation.confirm();
-  assert.deepEqual(state.started, [["preview-1", false, true]]);
+  assert.equal(state.confirmation, null);
+  assert.deepEqual(state.started, [["preview-1", false, false]]);
   assert.equal(button("同步地图").disabled, true);
   assert.match(message.textContent, /提交不等于下载完成/);
 });
 
 test("sync confirmation captures cleanup choice and refuses a changed preview", async (t) => {
   const { state, button, source, message } = await fixture(t);
+  state.plan = {
+    id: "web-plan", server: "cd.fastbot.top", directory: state.root,
+    missing: [{ id: "manual", download_url: "https://l4d2.fastbot.top/d/manual.vpk", size_bytes: 200 }],
+    cleanup: [], unresolved: [],
+  };
   await button("预览变更").emit("click");
   await button("同步地图").emit("click");
   source.value = "gd.fastbot.top";
@@ -132,6 +134,10 @@ test("website updates have a separate preview and failure download guidance", as
   assert.match(state.confirmation.message, /1 个从网站下载/);
   assert.match(state.confirmation.message, /先隔离/);
   assert.match(state.confirmation.message, /取消旧图清理也仍会隔离/);
+  assert.match(state.confirmation.message, /下载失败不会自动还原/);
+  assert.deepEqual(state.started, []);
+  await state.confirmation.confirm();
+  assert.deepEqual(state.started, [["web-plan", true, true]]);
   const link = findAll(parent, (node) => node.tagName === "a" && node.href === "https://l4d2.fastbot.top/");
   assert.equal(link.length, 1);
 });
@@ -218,3 +224,18 @@ test("recycle bin reports skipped batches without claiming success or touching m
   assert.equal(message.dataset.state, "error");
   assert.match(message.textContent, /无效的地图恢复记录/);
 });
+
+for (const [name, missing] of [["no downloads", []], ["Workshop only", [{ id: "workshop", workshop_id: "123456789" }]]]) {
+  test(`sync skips extra confirmation for ${name} even with unresolved website maps and cleanup`, async (t) => {
+    const { state, button } = await fixture(t);
+    state.plan = {
+      id: "plain-plan", server: "cd.fastbot.top", directory: state.root,
+      missing, cleanup: [{ name: "old.vpk" }], present: 4,
+      unresolved: [{ id: "manual", size_bytes: 200 }],
+    };
+    await button("预览变更").emit("click");
+    await button("同步地图").emit("click");
+    assert.equal(state.confirmation, null);
+    assert.deepEqual(state.started, [["plain-plan", true, false]]);
+  });
+}

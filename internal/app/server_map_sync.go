@@ -309,13 +309,23 @@ func (a *App) PreviewServerMapSync() (ServerMapSyncPreview, error) {
 	return plan.ServerMapSyncPreview, nil
 }
 
+// Only website maps that will be downloaded need the extra confirmation.
+// Present or unresolved manual maps do not turn a Workshop-only sync into one.
+func requireServerMapSyncConfirmation(plan serverMapSyncPlan, confirmed bool) error {
+	if !confirmed {
+		for _, remote := range plan.Missing {
+			if !protocol.IsValidWorkshopID(remote.WorkshopID) {
+				return errors.New("本次包含网站地图下载，请先确认地图同步提示后再执行")
+			}
+		}
+	}
+	return nil
+}
+
 func (a *App) StartServerMapSync(planID string, cleanup bool, confirmed bool) (ServerMapSyncResult, error) {
 	a.mapSyncMu.Lock()
 	defer a.mapSyncMu.Unlock()
 	result := ServerMapSyncResult{Errors: []string{}}
-	if !confirmed {
-		return result, errors.New("请先确认地图同步提示后再执行")
-	}
 	if cleanup && a.HasActiveDownloads() {
 		return result, errors.New("下载进行中，请等待完成后同步并清理，或取消清理选项仅补图")
 	}
@@ -328,6 +338,9 @@ func (a *App) StartServerMapSync(planID string, cleanup bool, confirmed bool) (S
 	}
 	if plan.ID != planID {
 		return result, errors.New("服务器清单或本机文件已改变，请重新预览后执行")
+	}
+	if err := requireServerMapSyncConfirmation(plan, confirmed); err != nil {
+		return result, err
 	}
 	if len(plan.Replacements) > 0 && a.HasActiveDownloads() {
 		return result, errors.New("下载进行中，请等待完成后替换网站地图")
