@@ -23,11 +23,13 @@ const publicMapsPath = "/api/public/maps"
 const communityStatusURL = "https://l4d2.fastbot.top/api/v1/servers"
 
 type ServerSyncMap struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	WorkshopID  string   `json:"workshop_id"`
-	WorkshopIDs []string `json:"workshop_ids"`
-	Size        int64    `json:"size_bytes"`
+	ID            string   `json:"id"`
+	Title         string   `json:"title"`
+	WorkshopID    string   `json:"workshop_id"`
+	WorkshopIDs   []string `json:"workshop_ids"`
+	Size          int64    `json:"size_bytes"`
+	DownloadURL   string   `json:"download_url,omitempty"`
+	SourceProblem string   `json:"source_problem,omitempty"`
 }
 type serverSyncDeleted struct {
 	ID         string `json:"id"`
@@ -51,14 +53,15 @@ type ServerSyncLocal struct {
 	WorkshopID string `json:"workshop_id"`
 }
 type ServerMapSyncPreview struct {
-	ID         string            `json:"id"`
-	Server     string            `json:"server"`
-	Directory  string            `json:"directory"`
-	Missing    []ServerSyncMap   `json:"missing"`
-	Unresolved []ServerSyncMap   `json:"unresolved"`
-	Cleanup    []ServerSyncLocal `json:"cleanup"`
-	Present    int               `json:"present"`
-	Bytes      int64             `json:"bytes"`
+	ID           string            `json:"id"`
+	Server       string            `json:"server"`
+	Directory    string            `json:"directory"`
+	Missing      []ServerSyncMap   `json:"missing"`
+	Unresolved   []ServerSyncMap   `json:"unresolved"`
+	Cleanup      []ServerSyncLocal `json:"cleanup"`
+	Replacements []ServerSyncLocal `json:"replacements"`
+	Present      int               `json:"present"`
+	Bytes        int64             `json:"bytes"`
 }
 type serverMapSyncPlan struct {
 	ServerMapSyncPreview
@@ -205,22 +208,43 @@ func syncFileRemoved(file ServerSyncLocal, manifest serverSyncManifest) bool {
 }
 
 func buildSyncPlan(server, root string, manifest serverSyncManifest, local []ServerSyncLocal) serverMapSyncPlan {
-	plan := serverMapSyncPlan{ServerMapSyncPreview: ServerMapSyncPreview{Server: server, Directory: root, Missing: []ServerSyncMap{}, Unresolved: []ServerSyncMap{}, Cleanup: []ServerSyncLocal{}}, Snapshot: manifest.SnapshotID, Created: time.Now()}
+	plan := serverMapSyncPlan{ServerMapSyncPreview: ServerMapSyncPreview{Server: server, Directory: root, Missing: []ServerSyncMap{}, Unresolved: []ServerSyncMap{}, Cleanup: []ServerSyncLocal{}, Replacements: []ServerSyncLocal{}}, Snapshot: manifest.SnapshotID, Created: time.Now()}
 	for _, remote := range manifest.Maps {
 		present := false
+		manual := !protocol.IsValidWorkshopID(remote.WorkshopID)
+		var outdated *ServerSyncLocal
+		conflict := false
 		for _, file := range local {
 			if syncIdentity(file, remote.ID, remote.WorkshopID) {
+				if manual && file.WorkshopID != "" {
+					conflict = true
+					continue
+				}
+				// Only maps without a Workshop ID use the server's byte size.
+				if manual && (remote.Size <= 0 || file.Size != remote.Size) {
+					copy := file
+					outdated = &copy
+					continue
+				}
 				present = true
 				break
 			}
+		}
+		if conflict {
+			remote.SourceProblem = "本机同名文件带有工坊身份，保留文件，请手动核对"
+			plan.Unresolved = append(plan.Unresolved, remote)
+			continue
 		}
 		if present {
 			plan.Present++
 			continue
 		}
-		if protocol.IsValidWorkshopID(remote.WorkshopID) {
+		if !manual || (remote.DownloadURL != "" && remote.Size > 0) {
 			plan.Missing = append(plan.Missing, remote)
 			plan.Bytes += remote.Size
+			if outdated != nil {
+				plan.Replacements = append(plan.Replacements, *outdated)
+			}
 		} else {
 			plan.Unresolved = append(plan.Unresolved, remote)
 		}
@@ -266,6 +290,7 @@ func (a *App) makeSyncPlan() (serverMapSyncPlan, error) {
 	if err != nil {
 		return serverMapSyncPlan{}, err
 	}
+	attachServerMapDownloads(&http.Client{Timeout: 30 * time.Second}, server, &manifest)
 	local, err := scanSyncLocal(root)
 	if err != nil {
 		return serverMapSyncPlan{}, err
@@ -284,10 +309,13 @@ func (a *App) PreviewServerMapSync() (ServerMapSyncPreview, error) {
 	return plan.ServerMapSyncPreview, nil
 }
 
-func (a *App) StartServerMapSync(planID string, cleanup bool) (ServerMapSyncResult, error) {
+func (a *App) StartServerMapSync(planID string, cleanup bool, confirmed bool) (ServerMapSyncResult, error) {
 	a.mapSyncMu.Lock()
 	defer a.mapSyncMu.Unlock()
 	result := ServerMapSyncResult{Errors: []string{}}
+	if !confirmed {
+		return result, errors.New("请先确认地图同步提示后再执行")
+	}
 	if cleanup && a.HasActiveDownloads() {
 		return result, errors.New("下载进行中，请等待完成后同步并清理，或取消清理选项仅补图")
 	}
@@ -301,10 +329,16 @@ func (a *App) StartServerMapSync(planID string, cleanup bool) (ServerMapSyncResu
 	if plan.ID != planID {
 		return result, errors.New("服务器清单或本机文件已改变，请重新预览后执行")
 	}
+	if len(plan.Replacements) > 0 && a.HasActiveDownloads() {
+		return result, errors.New("下载进行中，请等待完成后替换网站地图")
+	}
 	// Validate all missing files before any moves; downloading uses the existing queue.
 	details := []WorkshopFileDetails{}
 	seen := map[string]bool{}
 	for _, remote := range plan.Missing {
+		if !protocol.IsValidWorkshopID(remote.WorkshopID) {
+			continue
+		}
 		if seen[remote.WorkshopID] {
 			continue
 		}
@@ -334,7 +368,7 @@ func (a *App) StartServerMapSync(planID string, cleanup bool) (ServerMapSyncResu
 	if latest.ID != planID {
 		return result, errors.New("解析期间地图清单或本机文件发生变化，请重新预览")
 	}
-	if cleanup && a.HasActiveDownloads() {
+	if (cleanup || len(plan.Replacements) > 0) && a.HasActiveDownloads() {
 		return result, errors.New("有正在下载的任务，未执行清理，请等待完成后重试")
 	}
 	if a.GetRootDirectory() != plan.Directory {
@@ -344,12 +378,29 @@ func (a *App) StartServerMapSync(planID string, cleanup bool) (ServerMapSyncResu
 			return result, errors.New("当前目录已切换，请重新预览")
 		}
 	}
-	if cleanup && len(plan.Cleanup) > 0 {
-		dir, count, err := quarantineSyncMaps(plan.Directory, plan.Cleanup)
+	toIsolate := append([]ServerSyncLocal{}, plan.Replacements...)
+	if cleanup {
+		toIsolate = append(toIsolate, plan.Cleanup...)
+	}
+	if len(toIsolate) > 0 {
+		dir, count, err := quarantineSyncMaps(plan.Directory, toIsolate)
 		result.QuarantineDirectory, result.Quarantined = dir, count
 		if err != nil {
 			return result, err
 		}
+	}
+	// Isolation deliberately precedes downloads. A download failure leaves the
+	// recorded backup in place until the user explicitly chooses to restore it.
+	for _, remote := range plan.Missing {
+		if protocol.IsValidWorkshopID(remote.WorkshopID) {
+			continue
+		}
+		if a.hasQueuedServerMap(remote) {
+			result.AlreadyQueued++
+			continue
+		}
+		a.startServerMapDownload(remote, plan.Directory)
+		result.Queued++
 	}
 	for _, item := range details {
 		active := false
@@ -363,7 +414,7 @@ func (a *App) StartServerMapSync(planID string, cleanup bool) (ServerMapSyncResu
 			result.AlreadyQueued++
 			continue
 		}
-		a.startDownloadTask(item, a.GetWorkshopPreferredIP(), true)
+		a.createDownloadTask(item, a.GetWorkshopPreferredIP(), true, nil, plan.Directory)
 		result.Queued++
 	}
 	a.mapSyncPlan = nil

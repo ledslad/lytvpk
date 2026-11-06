@@ -1,6 +1,7 @@
 import { COMMUNITY_SERVER_PRESETS, formatSyncBytes, normalizeSyncSource } from "./presets.js";
 
 const COMMUNITY_GUIDE_PAGE = "https://l4d2.fastbot.top/server-guide";
+const COMMUNITY_MAP_WEBSITE = "https://l4d2.fastbot.top/";
 const mountedViews = new WeakMap();
 
 function element(tag, className, text) {
@@ -184,7 +185,15 @@ function createCommunityView(parent, services) {
   message.setAttribute("role", "status");
   message.setAttribute("aria-live", "polite");
   const lists = element("div", "community-sync-lists");
-  sync.append(syncHeading, directoryRow, sourceField, toolbar, cleanupOptions, message, lists);
+  const downloadHelp = element("p", "community-sync-note", "网站地图（无工坊 ID）按文件名和大小比对。下载失败请到 ");
+  const downloadLink = element("a", "", COMMUNITY_MAP_WEBSITE);
+  downloadLink.href = COMMUNITY_MAP_WEBSITE;
+  downloadLink.addEventListener("click", (event) => {
+    event.preventDefault();
+    BrowserOpenURL(COMMUNITY_MAP_WEBSITE);
+  });
+  downloadHelp.append(downloadLink, document.createTextNode(" 手动下载。"));
+  sync.append(syncHeading, directoryRow, sourceField, toolbar, cleanupOptions, message, lists, downloadHelp);
   view.appendChild(sync);
   parent.prepend(view);
 
@@ -318,10 +327,12 @@ function createCommunityView(parent, services) {
       const missing = Array.isArray(plan.missing) ? plan.missing : [];
       const cleanupItems = Array.isArray(plan.cleanup) ? plan.cleanup : [];
       const unresolved = Array.isArray(plan.unresolved) ? plan.unresolved : [];
-      message.textContent = `已匹配 ${plan.present || 0} 项；待下载 ${missing.length} 项（约 ${formatSyncBytes(plan.bytes)}）；待清理 ${cleanupItems.length} 项；需手动处理 ${unresolved.length} 项。`;
-      showList(lists, "待下载", missing, (item) => `${item.title || item.id} · ${formatSyncBytes(item.size_bytes)}`);
+      const replacements = Array.isArray(plan.replacements) ? plan.replacements : [];
+      message.textContent = `已匹配 ${plan.present || 0} 项；待下载 ${missing.length} 项（约 ${formatSyncBytes(plan.bytes)}）；网站地图旧版 ${replacements.length} 项；待清理 ${cleanupItems.length} 项；需手动处理 ${unresolved.length} 项。`;
+      showList(lists, "待下载", missing, (item) => `${item.title || item.id} · ${item.download_url ? "网站下载" : "工坊下载"} · ${formatSyncBytes(item.size_bytes)}`);
+      showList(lists, "网站地图旧版（下载前隔离）", replacements, (item) => `${item.name} · ${formatSyncBytes(item.size)}`);
       showList(lists, "待清理（可恢复）", cleanupItems, (item) => `${item.name} · ${formatSyncBytes(item.size)}`);
-      showList(lists, "缺少明确工坊 ID，需手动处理", unresolved, (item) => item.title || item.id);
+      showList(lists, "无可用下载源，需手动处理", unresolved, (item) => `${item.title || item.id}${item.source_problem ? `：${item.source_problem}` : ""}`);
     } catch (error) { fail(error); }
     finally { setBusy(false); }
   }
@@ -329,13 +340,30 @@ function createCommunityView(parent, services) {
   async function applySync() {
     if (busy || !currentPlan) return;
     const id = currentPlan.id;
+    const cleanupRequested = cleanup.checked;
+    const missing = Array.isArray(currentPlan.missing) ? currentPlan.missing : [];
+    const replacements = Array.isArray(currentPlan.replacements) ? currentPlan.replacements : [];
+    const oldCount = cleanupRequested && Array.isArray(currentPlan.cleanup) ? currentPlan.cleanup.length : 0;
+    showConfirmModal(
+      "确认同步服务器地图？",
+      `将提交 ${missing.length} 个下载任务，其中 ${missing.filter((item) => item.download_url).length} 个从网站下载。先隔离 ${oldCount} 个服务器已删除的旧图及 ${replacements.length} 个大小不同的网站地图旧版，再开始下载。取消旧图清理也仍会隔离需要替换的网站地图旧版。下载失败不会自动还原，备份保留在 addons/disabled/server-sync-*，可自行恢复。若下载失败，请前往 ${COMMUNITY_MAP_WEBSITE} 手动下载。`,
+      () => executeSync(id, cleanupRequested),
+    );
+  }
+
+  async function executeSync(id, cleanupRequested) {
+    if (busy) return false;
+    if (currentPlan?.id !== id) {
+      fail("预览已改变，请重新预览并确认同步。");
+      return;
+    }
     setBusy(true);
     message.textContent = "正在重新核对预览并提交下载任务…";
     try {
-      const result = await StartServerMapSync(id, cleanup.checked);
+      const result = await StartServerMapSync(id, cleanupRequested, true);
       invalidatePlan();
       const destination = result.quarantine_directory ? `；恢复目录：${result.quarantine_directory}` : "";
-      message.textContent = `已提交 ${result.queued || 0} 个下载任务，${result.already_queued || 0} 项已在队列；已隔离 ${result.quarantined || 0} 张地图${destination}。提交不等于下载完成，请在“查看下载任务”中检查结果。`;
+      message.textContent = `已提交 ${result.queued || 0} 个下载任务，${result.already_queued || 0} 项已在队列；已隔离 ${result.quarantined || 0} 张地图${destination}。提交不等于下载完成，请在“查看下载任务”中检查结果。下载失败不会自动还原旧图，可到 ${COMMUNITY_MAP_WEBSITE} 手动下载。`;
       message.dataset.state = "success";
       if (Array.isArray(result.errors) && result.errors.length) {
         message.appendChild(document.createTextNode(` 问题：${result.errors.join("；")}`));

@@ -73,6 +73,7 @@ type DownloadTask struct {
 	syncDownload   bool
 	rootDirectory  string
 	workerActive   bool
+	serverMap      *ServerSyncMap
 }
 
 // TaskManager manages download tasks

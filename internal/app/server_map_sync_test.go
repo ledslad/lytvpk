@@ -207,7 +207,7 @@ func TestMapSyncPresenceUsesIdentityWithoutServerSizeComparison(t *testing.T) {
 	}
 	manifest := serverSyncManifest{SnapshotID: "identity-only", Maps: []ServerSyncMap{
 		{ID: "remote-name", WorkshopID: "123456789", Size: 100},
-		{ID: "exact-map", Size: 200},
+		{ID: "exact-map", Size: 9},
 		{ID: "missing", WorkshopID: "234567890", Size: 100},
 	}}
 	plan := buildSyncPlan(defaultMapSyncServer, t.TempDir(), manifest, local)

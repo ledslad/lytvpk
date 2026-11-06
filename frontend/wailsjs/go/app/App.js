@@ -594,8 +594,8 @@ export function StartProblemModScan() {
   return window['go']['app']['App']['StartProblemModScan']();
 }
 
-export function StartServerMapSync(arg1, arg2) {
-  return window['go']['app']['App']['StartServerMapSync'](arg1, arg2);
+export function StartServerMapSync(arg1, arg2, arg3) {
+  return window['go']['app']['App']['StartServerMapSync'](arg1, arg2, arg3);
 }
 
 export function SubmitProblemModScanResult(arg1) {

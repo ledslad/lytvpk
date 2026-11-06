@@ -37,11 +37,18 @@ func (a *App) StartDownloadTask(details WorkshopFileDetails, useOptimizedIP bool
 }
 
 func (a *App) startDownloadTask(details WorkshopFileDetails, useOptimizedIP bool, syncDownload bool) string {
+	return a.createDownloadTask(details, useOptimizedIP, syncDownload, nil, a.GetRootDirectory())
+}
+
+func (a *App) createDownloadTask(details WorkshopFileDetails, useOptimizedIP bool, syncDownload bool, serverMap *ServerSyncMap, rootDirectory string) string {
 	taskID := fmt.Sprintf("%d-%d", time.Now().UnixNano(), downloadTaskSequence.Add(1))
 
 	totalSize := parseFileSize(details.FileSize)
 
 	filename := workshopDownloadFilename(details.PublishedFileId, details.Filename)
+	if serverMap != nil {
+		filename = serverMap.ID + ".vpk"
+	}
 
 	// If it's a direct download, use the cleaned filename as title
 	title := details.Title
@@ -67,8 +74,9 @@ func (a *App) startDownloadTask(details WorkshopFileDetails, useOptimizedIP bool
 		CreatedAt:      time.Now().Format("2006-01-02 15:04:05"),
 		cancelFunc:     cancel,
 		syncDownload:   syncDownload,
-		rootDirectory:  a.GetRootDirectory(),
+		rootDirectory:  rootDirectory,
 		workerActive:   true,
+		serverMap:      serverMap,
 	}
 
 	taskManager.mu.Lock()
@@ -89,6 +97,9 @@ func (a *App) processDownloadTask(ctx context.Context, task *DownloadTask, downl
 	}()
 
 	updateStatus := func(status string, err string) {
+		if status == "failed" && task.serverMap != nil {
+			err += "；可前往 " + communityMapWebsite + "/ 手动下载。已隔离的旧图不会自动还原。"
+		}
 		taskManager.mu.Lock()
 		task.Status = status
 		task.Error = err
@@ -111,7 +122,7 @@ func (a *App) processDownloadTask(ctx context.Context, task *DownloadTask, downl
 	// IP Optimization
 	var bestIP string
 	// Check global preferred IP setting
-	if a.GetWorkshopPreferredIP() {
+	if task.serverMap == nil && a.GetWorkshopPreferredIP() {
 		task.UseOptimizedIP = true
 	}
 

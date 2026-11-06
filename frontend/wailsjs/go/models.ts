@@ -958,6 +958,8 @@ export namespace app {
 	    workshop_id: string;
 	    workshop_ids: string[];
 	    size_bytes: number;
+	    download_url?: string;
+	    source_problem?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerSyncMap(source);
@@ -970,6 +972,8 @@ export namespace app {
 	        this.workshop_id = source["workshop_id"];
 	        this.workshop_ids = source["workshop_ids"];
 	        this.size_bytes = source["size_bytes"];
+	        this.download_url = source["download_url"];
+	        this.source_problem = source["source_problem"];
 	    }
 	}
 	export class ServerMapSyncPreview {
@@ -979,6 +983,7 @@ export namespace app {
 	    missing: ServerSyncMap[];
 	    unresolved: ServerSyncMap[];
 	    cleanup: ServerSyncLocal[];
+	    replacements: ServerSyncLocal[];
 	    present: number;
 	    bytes: number;
 	
@@ -994,6 +999,7 @@ export namespace app {
 	        this.missing = this.convertValues(source["missing"], ServerSyncMap);
 	        this.unresolved = this.convertValues(source["unresolved"], ServerSyncMap);
 	        this.cleanup = this.convertValues(source["cleanup"], ServerSyncLocal);
+	        this.replacements = this.convertValues(source["replacements"], ServerSyncLocal);
 	        this.present = source["present"];
 	        this.bytes = source["bytes"];
 	    }

@@ -28,6 +28,9 @@ func finalizeSyncDownload(task *DownloadTask, temporaryPath string) (string, err
 	if !info.Mode().IsRegular() || info.Size() != task.TotalSize {
 		return "", fmt.Errorf("同步文件大小不符：预期 %d，实际 %d", task.TotalSize, info.Size())
 	}
+	if task.serverMap != nil {
+		return finalizeServerMapDownload(task, temporaryPath)
+	}
 	filename := filepath.Base(task.Filename)
 	if filename != task.WorkshopID+".vpk" {
 		return "", fmt.Errorf("同步文件名必须为工坊 ID.vpk")
@@ -127,6 +130,11 @@ func commitDownloadFile(ctx context.Context, task *DownloadTask, temporaryPath, 
 // Synchronization metadata is staged separately and linked without replacing an
 // existing sidecar. Ordinary downloads retain the upstream overwrite behavior.
 func saveDownloadMeta(task *DownloadTask, targetPath string, details WorkshopFileDetails) error {
+	if task.serverMap != nil {
+		// These maps have no Workshop identity. Do not write a synthetic ID into
+		// a Workshop sidecar; future syncs match the preserved name and byte size.
+		return nil
+	}
 	if !task.syncDownload {
 		return SaveWorkshopMeta(targetPath, details)
 	}

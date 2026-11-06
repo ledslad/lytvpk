@@ -301,7 +301,7 @@ export function StartPanelMapUpload(arg1:string,arg2:Array<string>):Promise<Arra
 
 export function StartProblemModScan():Promise<app.ProblemModScanSession>;
 
-export function StartServerMapSync(arg1:string,arg2:boolean):Promise<app.ServerMapSyncResult>;
+export function StartServerMapSync(arg1:string,arg2:boolean,arg3:boolean):Promise<app.ServerMapSyncResult>;
 
 export function SubmitProblemModScanResult(arg1:string):Promise<app.ProblemModScanSession>;
 

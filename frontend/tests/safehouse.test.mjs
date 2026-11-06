@@ -66,7 +66,7 @@ async function fixture(t) {
       return { servers: [{ id: "cd", online: true, players: 4, max_players: 8, map_title: "Test campaign" }] };
     },
     ConnectToServer: async (address) => state.connected.push(address),
-    PreviewServerMapSync: async () => ({
+    PreviewServerMapSync: async () => state.plan || ({
       id: "preview-1", server: state.config.mapSyncServer, directory: state.root, present: 2, bytes: 1024,
       missing: [{ id: "map", title: "Missing campaign", size_bytes: 1024 }],
       cleanup: [{ name: "old.vpk", size: 512 }], unresolved: [],
@@ -99,9 +99,41 @@ test("safehouse requires a preview and keeps cleanup optional with folded detail
   const cleanup = findAll(parent, (node) => node.type === "checkbox")[0];
   cleanup.checked = false;
   await button("同步地图").emit("click");
-  assert.deepEqual(state.started, [["preview-1", false]]);
+  assert.deepEqual(state.started, []);
+  assert.match(state.confirmation.message, /下载失败不会自动还原/);
+  assert.match(state.confirmation.message, /https:\/\/l4d2\.fastbot\.top\//);
+  await state.confirmation.confirm();
+  assert.deepEqual(state.started, [["preview-1", false, true]]);
   assert.equal(button("同步地图").disabled, true);
   assert.match(message.textContent, /提交不等于下载完成/);
+});
+
+test("sync confirmation captures cleanup choice and refuses a changed preview", async (t) => {
+  const { state, button, source, message } = await fixture(t);
+  await button("预览变更").emit("click");
+  await button("同步地图").emit("click");
+  source.value = "gd.fastbot.top";
+  await source.emit("input");
+  await state.confirmation.confirm();
+  assert.deepEqual(state.started, []);
+  assert.match(message.textContent, /预览已改变/);
+});
+
+test("website updates have a separate preview and failure download guidance", async (t) => {
+  const { state, button, parent } = await fixture(t);
+  state.plan = {
+    id: "web-plan", server: "cd.fastbot.top", directory: state.root,
+    missing: [{ id: "Frozen", download_url: "https://l4d2.fastbot.top/d/Frozen.vpk", size_bytes: 200 }],
+    replacements: [{ name: "Frozen.vpk", size: 100 }], cleanup: [], unresolved: [],
+  };
+  await button("预览变更").emit("click");
+  assert.ok(findAll(parent, (node) => node.tagName === "summary" && node.textContent.includes("网站地图旧版")).length);
+  await button("同步地图").emit("click");
+  assert.match(state.confirmation.message, /1 个从网站下载/);
+  assert.match(state.confirmation.message, /先隔离/);
+  assert.match(state.confirmation.message, /取消旧图清理也仍会隔离/);
+  const link = findAll(parent, (node) => node.tagName === "a" && node.href === "https://l4d2.fastbot.top/");
+  assert.equal(link.length, 1);
 });
 
 test("editing the source invalidates the preview until the new source is saved", async (t) => {

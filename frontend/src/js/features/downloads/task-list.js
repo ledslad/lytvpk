@@ -286,7 +286,7 @@ function findDownloadedTaskFile(task) {
   }
 
   const workshopId = String(task.workshop_id || "").trim();
-  if (workshopId && !workshopId.startsWith("direct-")) {
+  if (/^\d+$/.test(workshopId)) {
     const matches = files.filter((item) => String(item.workshopId || "") === workshopId);
     if (matches.length === 1) {
       return matches[0];
