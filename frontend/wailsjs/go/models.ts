@@ -960,6 +960,7 @@ export namespace app {
 	    size_bytes: number;
 	    download_url?: string;
 	    source_problem?: string;
+	    sha256?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ServerSyncMap(source);
@@ -974,9 +975,13 @@ export namespace app {
 	        this.size_bytes = source["size_bytes"];
 	        this.download_url = source["download_url"];
 	        this.source_problem = source["source_problem"];
+	        this.sha256 = source["sha256"];
 	    }
 	}
 	export class ServerMapSyncPreview {
+	    server_download_only: boolean;
+	    requires_confirmation: boolean;
+	    verify_map_contents: boolean;
 	    id: string;
 	    server: string;
 	    directory: string;
@@ -993,6 +998,9 @@ export namespace app {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.server_download_only = source["server_download_only"];
+	        this.requires_confirmation = source["requires_confirmation"];
+	        this.verify_map_contents = source["verify_map_contents"];
 	        this.id = source["id"];
 	        this.server = source["server"];
 	        this.directory = source["directory"];

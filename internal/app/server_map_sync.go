@@ -30,6 +30,7 @@ type ServerSyncMap struct {
 	Size          int64    `json:"size_bytes"`
 	DownloadURL   string   `json:"download_url,omitempty"`
 	SourceProblem string   `json:"source_problem,omitempty"`
+	SHA256        string   `json:"sha256,omitempty"`
 }
 type serverSyncDeleted struct {
 	ID         string `json:"id"`
@@ -53,20 +54,24 @@ type ServerSyncLocal struct {
 	WorkshopID string `json:"workshop_id"`
 }
 type ServerMapSyncPreview struct {
-	ID           string            `json:"id"`
-	Server       string            `json:"server"`
-	Directory    string            `json:"directory"`
-	Missing      []ServerSyncMap   `json:"missing"`
-	Unresolved   []ServerSyncMap   `json:"unresolved"`
-	Cleanup      []ServerSyncLocal `json:"cleanup"`
-	Replacements []ServerSyncLocal `json:"replacements"`
-	Present      int               `json:"present"`
-	Bytes        int64             `json:"bytes"`
+	ServerDownloadOnly   bool              `json:"server_download_only"`
+	RequiresConfirmation bool              `json:"requires_confirmation"`
+	VerifyMapContents    bool              `json:"verify_map_contents"`
+	ID                   string            `json:"id"`
+	Server               string            `json:"server"`
+	Directory            string            `json:"directory"`
+	Missing              []ServerSyncMap   `json:"missing"`
+	Unresolved           []ServerSyncMap   `json:"unresolved"`
+	Cleanup              []ServerSyncLocal `json:"cleanup"`
+	Replacements         []ServerSyncLocal `json:"replacements"`
+	Present              int               `json:"present"`
+	Bytes                int64             `json:"bytes"`
 }
 type serverMapSyncPlan struct {
 	ServerMapSyncPreview
-	Snapshot string
-	Created  time.Time
+	Snapshot       string
+	Created        time.Time
+	localChecksums map[string]string
 }
 type ServerMapSyncResult struct {
 	Queued              int      `json:"queued"`
@@ -208,14 +213,38 @@ func syncFileRemoved(file ServerSyncLocal, manifest serverSyncManifest) bool {
 }
 
 func buildSyncPlan(server, root string, manifest serverSyncManifest, local []ServerSyncLocal) serverMapSyncPlan {
-	plan := serverMapSyncPlan{ServerMapSyncPreview: ServerMapSyncPreview{Server: server, Directory: root, Missing: []ServerSyncMap{}, Unresolved: []ServerSyncMap{}, Cleanup: []ServerSyncLocal{}, Replacements: []ServerSyncLocal{}}, Snapshot: manifest.SnapshotID, Created: time.Now()}
+	return buildSyncPlanWithSource(server, root, manifest, local, false)
+}
+
+func buildSyncPlanWithSource(server, root string, manifest serverSyncManifest, local []ServerSyncLocal, serverDownloadOnly bool) serverMapSyncPlan {
+	return buildSyncPlanWithVerification(server, root, manifest, local, serverDownloadOnly, false)
+}
+
+func buildSyncPlanWithVerification(server, root string, manifest serverSyncManifest, local []ServerSyncLocal, serverDownloadOnly, verifyMapContents bool) serverMapSyncPlan {
+	plan := serverMapSyncPlan{ServerMapSyncPreview: ServerMapSyncPreview{Server: server, Directory: root, ServerDownloadOnly: serverDownloadOnly, VerifyMapContents: verifyMapContents, Missing: []ServerSyncMap{}, Unresolved: []ServerSyncMap{}, Cleanup: []ServerSyncLocal{}, Replacements: []ServerSyncLocal{}}, Snapshot: manifest.SnapshotID, Created: time.Now()}
+	if verifyMapContents {
+		plan.localChecksums = make(map[string]string)
+	}
 	for _, remote := range manifest.Maps {
+		if verifyMapContents {
+			plan.addVerifiedMap(remote, local)
+			continue
+		}
 		present := false
 		manual := !protocol.IsValidWorkshopID(remote.WorkshopID)
 		var outdated *ServerSyncLocal
 		conflict := false
+		workshopID := remote.WorkshopID
+		// On the server, each numeric VPK name identifies a separate file,
+		// even if several parts share the parent campaign's Workshop ID.
+		if serverDownloadOnly {
+			workshopID = ""
+			if !manual && protocol.IsValidWorkshopID(remote.ID) {
+				workshopID = remote.ID
+			}
+		}
 		for _, file := range local {
-			if syncIdentity(file, remote.ID, remote.WorkshopID) {
+			if syncIdentity(file, remote.ID, workshopID) {
 				if manual && file.WorkshopID != "" {
 					conflict = true
 					continue
@@ -239,7 +268,7 @@ func buildSyncPlan(server, root string, manifest serverSyncManifest, local []Ser
 			plan.Present++
 			continue
 		}
-		if !manual || (remote.DownloadURL != "" && remote.Size > 0) {
+		if (remote.DownloadURL != "" && remote.Size > 0) || (!manual && !plan.ServerDownloadOnly) {
 			plan.Missing = append(plan.Missing, remote)
 			plan.Bytes += remote.Size
 			if outdated != nil {
@@ -256,18 +285,20 @@ func buildSyncPlan(server, root string, manifest serverSyncManifest, local []Ser
 			plan.Cleanup = append(plan.Cleanup, file)
 		}
 	}
+	plan.RequiresConfirmation = hasManualSyncDownloads(plan.Missing)
 	// Include local file fingerprints so a changed directory invalidates approval.
 	data, _ := json.Marshal(struct {
-		Plan     ServerMapSyncPreview
-		Snapshot string
-		Local    []ServerSyncLocal
-	}{plan.ServerMapSyncPreview, plan.Snapshot, local})
+		Plan           ServerMapSyncPreview
+		Snapshot       string
+		Local          []ServerSyncLocal
+		LocalChecksums map[string]string
+	}{plan.ServerMapSyncPreview, plan.Snapshot, local, plan.localChecksums})
 	sum := sha256.Sum256(data)
 	plan.ID = hex.EncodeToString(sum[:])
 	return plan
 }
 
-func (a *App) makeSyncPlan() (serverMapSyncPlan, error) {
+func (a *App) makeSyncPlan(serverDownloadOnly, verifyMapContents bool) (serverMapSyncPlan, error) {
 	a.mu.RLock()
 	root, source := a.rootDir, a.mapSyncServer
 	a.mu.RUnlock()
@@ -286,22 +317,33 @@ func (a *App) makeSyncPlan() (serverMapSyncPlan, error) {
 	if err != nil {
 		return serverMapSyncPlan{}, err
 	}
+	if verifyMapContents && server != defaultMapSyncServer {
+		return serverMapSyncPlan{}, errors.New("地图内容校验当前支持成都服，请将同步来源设为 " + defaultMapSyncServer)
+	}
 	manifest, err := fetchSyncManifest(&http.Client{Timeout: 90 * time.Second}, "https://"+server)
 	if err != nil {
 		return serverMapSyncPlan{}, err
 	}
-	attachServerMapDownloads(&http.Client{Timeout: 30 * time.Second}, server, &manifest)
+	serverDownloadOnly = serverDownloadOnly || verifyMapContents
+	client := &http.Client{Timeout: 90 * time.Second}
+	attachServerMapDownloads(client, server, &manifest, serverDownloadOnly)
+	if verifyMapContents {
+		if err := attachServerMapChecksums(client, &manifest); err != nil {
+			return serverMapSyncPlan{}, err
+		}
+	}
 	local, err := scanSyncLocal(root)
 	if err != nil {
 		return serverMapSyncPlan{}, err
 	}
-	return buildSyncPlan(server, root, manifest, local), nil
+	return buildSyncPlanWithVerification(server, root, manifest, local, serverDownloadOnly, verifyMapContents), nil
 }
 
-func (a *App) PreviewServerMapSync() (ServerMapSyncPreview, error) {
+func (a *App) PreviewServerMapSync(serverDownloadOnly, verifyMapContents bool) (ServerMapSyncPreview, error) {
 	a.mapSyncMu.Lock()
 	defer a.mapSyncMu.Unlock()
-	plan, err := a.makeSyncPlan()
+	a.mapSyncPlan = nil
+	plan, err := a.makeSyncPlan(serverDownloadOnly, verifyMapContents)
 	if err != nil {
 		return ServerMapSyncPreview{}, err
 	}
@@ -312,14 +354,19 @@ func (a *App) PreviewServerMapSync() (ServerMapSyncPreview, error) {
 // Only website maps that will be downloaded need the extra confirmation.
 // Present or unresolved manual maps do not turn a Workshop-only sync into one.
 func requireServerMapSyncConfirmation(plan serverMapSyncPlan, confirmed bool) error {
-	if !confirmed {
-		for _, remote := range plan.Missing {
-			if !protocol.IsValidWorkshopID(remote.WorkshopID) {
-				return errors.New("本次包含网站地图下载，请先确认地图同步提示后再执行")
-			}
-		}
+	if !confirmed && hasManualSyncDownloads(plan.Missing) {
+		return errors.New("本次包含手动上传的地图，请先确认同步提示后再执行")
 	}
 	return nil
+}
+
+func hasManualSyncDownloads(missing []ServerSyncMap) bool {
+	for _, remote := range missing {
+		if remote.DownloadURL != "" && !protocol.IsValidWorkshopID(remote.WorkshopID) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) StartServerMapSync(planID string, cleanup bool, confirmed bool) (ServerMapSyncResult, error) {
@@ -332,7 +379,7 @@ func (a *App) StartServerMapSync(planID string, cleanup bool, confirmed bool) (S
 	if a.mapSyncPlan == nil || a.mapSyncPlan.ID != planID || time.Since(a.mapSyncPlan.Created) > 10*time.Minute {
 		return result, errors.New("预览已过期，请重新预览")
 	}
-	plan, err := a.makeSyncPlan()
+	plan, err := a.makeSyncPlan(a.mapSyncPlan.ServerDownloadOnly, a.mapSyncPlan.VerifyMapContents)
 	if err != nil {
 		return result, err
 	}
@@ -349,7 +396,7 @@ func (a *App) StartServerMapSync(planID string, cleanup bool, confirmed bool) (S
 	details := []WorkshopFileDetails{}
 	seen := map[string]bool{}
 	for _, remote := range plan.Missing {
-		if !protocol.IsValidWorkshopID(remote.WorkshopID) {
+		if remote.DownloadURL != "" {
 			continue
 		}
 		if seen[remote.WorkshopID] {
@@ -372,14 +419,15 @@ func (a *App) StartServerMapSync(planID string, cleanup bool, confirmed bool) (S
 			return result, fmt.Errorf("缺图 %s 暂无可用 VPK 下载，未执行清理", remote.Title)
 		}
 	}
-	// Workshop lookups may take minutes. Revalidate immediately before moving
-	// anything, including current installations and all local fingerprints.
-	latest, err := a.makeSyncPlan()
-	if err != nil {
-		return result, err
-	}
-	if latest.ID != planID {
-		return result, errors.New("解析期间地图清单或本机文件发生变化，请重新预览")
+	if len(details) > 0 {
+		// Workshop lookups can take minutes. Recheck the preview before moving files.
+		latest, err := a.makeSyncPlan(plan.ServerDownloadOnly, plan.VerifyMapContents)
+		if err != nil {
+			return result, err
+		}
+		if latest.ID != planID {
+			return result, errors.New("解析期间地图清单或本机文件发生变化，请重新预览")
+		}
 	}
 	if (cleanup || len(plan.Replacements) > 0) && a.HasActiveDownloads() {
 		return result, errors.New("有正在下载的任务，未执行清理，请等待完成后重试")
@@ -405,7 +453,7 @@ func (a *App) StartServerMapSync(planID string, cleanup bool, confirmed bool) (S
 	// Isolation deliberately precedes downloads. A download failure leaves the
 	// recorded backup in place until the user explicitly chooses to restore it.
 	for _, remote := range plan.Missing {
-		if protocol.IsValidWorkshopID(remote.WorkshopID) {
+		if remote.DownloadURL == "" {
 			continue
 		}
 		if a.hasQueuedServerMap(remote) {

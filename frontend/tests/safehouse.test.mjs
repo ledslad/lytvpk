@@ -56,7 +56,7 @@ async function fixture(t) {
   page.className = "page-view";
   const parent = new Node("div");
   page.append(parent);
-  const state = { config: { mapSyncServer: "cd.fastbot.top" }, root: "D:/Game/addons", started: [], connected: [], statusCalls: 0, cleared: [], confirmation: null };
+  const state = { config: { mapSyncServer: "cd.fastbot.top" }, root: "D:/Game/addons", started: [], previewModes: [], connected: [], statusCalls: 0, cleared: [], confirmation: null };
   const services = {
     getConfig: () => state.config,
     saveConfig: async (patch) => Object.assign(state.config, patch),
@@ -66,11 +66,14 @@ async function fixture(t) {
       return { servers: [{ id: "cd", online: true, players: 4, max_players: 8, map_title: "Test campaign" }] };
     },
     ConnectToServer: async (address) => state.connected.push(address),
-    PreviewServerMapSync: async () => state.plan || ({
+    PreviewServerMapSync: async (serverDownloadOnly, verifyMaps) => {
+      state.previewModes.push([serverDownloadOnly, verifyMaps]);
+      return state.plan || ({
       id: "preview-1", server: state.config.mapSyncServer, directory: state.root, present: 2, bytes: 1024,
       missing: [{ id: "map", title: "Missing campaign", size_bytes: 1024 }],
       cleanup: [{ name: "old.vpk", size: 512 }], unresolved: [],
-    }),
+      });
+    },
     StartServerMapSync: async (...args) => { state.started.push(args); return { queued: 1, quarantined: 0 }; },
     RestoreLastServerMapSync: async () => 1,
     PreviewServerMapSyncTrash: async () => state.trash || ({ id: "trash-1", directory: state.root, maps: 2, files: 4, bytes: 1024, batches: 1, skipped: 0 }),
@@ -108,7 +111,7 @@ test("safehouse requires a preview and keeps cleanup optional with folded detail
 test("sync confirmation captures cleanup choice and refuses a changed preview", async (t) => {
   const { state, button, source, message } = await fixture(t);
   state.plan = {
-    id: "web-plan", server: "cd.fastbot.top", directory: state.root,
+    id: "web-plan", server: "cd.fastbot.top", directory: state.root, requires_confirmation: true,
     missing: [{ id: "manual", download_url: "https://l4d2.fastbot.top/d/manual.vpk", size_bytes: 200 }],
     cleanup: [], unresolved: [],
   };
@@ -124,7 +127,7 @@ test("sync confirmation captures cleanup choice and refuses a changed preview", 
 test("website updates have a separate preview and failure download guidance", async (t) => {
   const { state, button, parent } = await fixture(t);
   state.plan = {
-    id: "web-plan", server: "cd.fastbot.top", directory: state.root,
+    id: "web-plan", server: "cd.fastbot.top", directory: state.root, requires_confirmation: true,
     missing: [{ id: "Frozen", download_url: "https://l4d2.fastbot.top/d/Frozen.vpk", size_bytes: 200 }],
     replacements: [{ name: "Frozen.vpk", size: 100 }], cleanup: [], unresolved: [],
   };
@@ -140,6 +143,35 @@ test("website updates have a separate preview and failure download guidance", as
   assert.deepEqual(state.started, [["web-plan", true, true]]);
   const link = findAll(parent, (node) => node.tagName === "a" && node.href === "https://l4d2.fastbot.top/");
   assert.equal(link.length, 1);
+});
+
+test("server download checkbox invalidates the old preview and adds Workshop maps without confirmation", async (t) => {
+  const { state, parent, button } = await fixture(t);
+  await button("预览变更").emit("click");
+  const checkbox = findAll(parent, (node) => node.id === "safehouse-server-download")[0];
+  checkbox.checked = true;
+  await checkbox.emit("change");
+  assert.equal(button("同步地图").disabled, true);
+  state.plan = {
+    id: "server-only", server: "cd.fastbot.top", directory: state.root,
+    missing: [{ id: "123456789", workshop_id: "123456789", download_url: "https://l4d2.fastbot.top/d/123456789.vpk" }],
+  };
+  await button("预览变更").emit("click");
+  assert.deepEqual(state.previewModes, [[false, false], [true, false]]);
+  await button("同步地图").emit("click");
+  assert.equal(state.confirmation, null);
+  assert.deepEqual(state.started, [["server-only", true, false]]);
+});
+
+test("map verification selects server downloads and requires a fresh preview", async (t) => {
+  const { state, parent, button } = await fixture(t);
+  await button("预览变更").emit("click");
+  const checkbox = findAll(parent, (node) => node.id === "safehouse-verify-maps")[0];
+  checkbox.checked = true;
+  await checkbox.emit("change");
+  assert.equal(button("同步地图").disabled, true);
+  await button("预览变更").emit("click");
+  assert.deepEqual(state.previewModes, [[false, false], [true, true]]);
 });
 
 test("editing the source invalidates the preview until the new source is saved", async (t) => {

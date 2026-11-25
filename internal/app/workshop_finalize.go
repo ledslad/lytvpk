@@ -131,8 +131,8 @@ func commitDownloadFile(ctx context.Context, task *DownloadTask, temporaryPath, 
 // existing sidecar. Ordinary downloads retain the upstream overwrite behavior.
 func saveDownloadMeta(task *DownloadTask, targetPath string, details WorkshopFileDetails) error {
 	if task.serverMap != nil {
-		// These maps have no Workshop identity. Do not write a synthetic ID into
-		// a Workshop sidecar; future syncs match the preserved name and byte size.
+		// Server download task IDs are synthetic. Future syncs can identify the
+		// installed VPK by its preserved server filename.
 		return nil
 	}
 	if !task.syncDownload {

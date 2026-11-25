@@ -49,19 +49,25 @@ func validServerMapFilename(name string) bool {
 	return true
 }
 
-func attachServerMapDownloads(client *http.Client, server string, manifest *serverSyncManifest) {
+func attachServerMapDownloads(client *http.Client, server string, manifest *serverSyncManifest, serverDownloadOnly bool) {
 	for i := range manifest.Maps {
 		manifest.Maps[i].DownloadURL = ""
 		manifest.Maps[i].SourceProblem = ""
+		manifest.Maps[i].SHA256 = ""
 	}
 	// This site's files belong to CD. Matching names on another server do not
 	// establish that the bytes come from that other server.
 	if server != defaultMapSyncServer {
+		if serverDownloadOnly {
+			for i := range manifest.Maps {
+				manifest.Maps[i].SourceProblem = "该服务器尚未配置公开地图下载源"
+			}
+		}
 		return
 	}
 	needed := false
 	for _, remote := range manifest.Maps {
-		needed = needed || !protocol.IsValidWorkshopID(remote.WorkshopID)
+		needed = needed || serverDownloadOnly || !protocol.IsValidWorkshopID(remote.WorkshopID)
 	}
 	if !needed {
 		return
@@ -69,16 +75,16 @@ func attachServerMapDownloads(client *http.Client, server string, manifest *serv
 	var catalog serverMapCatalog
 	if err := syncJSON(client, communityMapCatalogURL, &catalog); err != nil || catalog.Files == nil {
 		for i := range manifest.Maps {
-			if !protocol.IsValidWorkshopID(manifest.Maps[i].WorkshopID) {
+			if serverDownloadOnly || !protocol.IsValidWorkshopID(manifest.Maps[i].WorkshopID) {
 				manifest.Maps[i].SourceProblem = "网站下载清单暂不可用，请到 " + communityMapWebsite + "/ 手动下载"
 			}
 		}
 		return
 	}
-	mergeServerMapDownloads(manifest, catalog)
+	mergeServerMapDownloads(manifest, catalog, serverDownloadOnly)
 }
 
-func mergeServerMapDownloads(manifest *serverSyncManifest, catalog serverMapCatalog) {
+func mergeServerMapDownloads(manifest *serverSyncManifest, catalog serverMapCatalog, serverDownloadOnly bool) {
 	byName := map[string][]serverMapCatalogEntry{}
 	for _, entry := range catalog.Files {
 		key := strings.ToLower(entry.Name)
@@ -90,7 +96,7 @@ func mergeServerMapDownloads(manifest *serverSyncManifest, catalog serverMapCata
 	}
 	for i := range manifest.Maps {
 		remote := &manifest.Maps[i]
-		if protocol.IsValidWorkshopID(remote.WorkshopID) {
+		if !serverDownloadOnly && protocol.IsValidWorkshopID(remote.WorkshopID) {
 			continue
 		}
 		remote.DownloadURL = ""
@@ -148,6 +154,15 @@ func finalizeServerMapDownload(task *DownloadTask, temporaryPath string) (string
 	filename := remote.ID + ".vpk"
 	if !validServerMapFilename(filename) || task.Filename != filename || remote.Size <= 0 || task.TotalSize != remote.Size {
 		return "", fmt.Errorf("网站地图下载身份或文件名无效")
+	}
+	if remote.SHA256 != "" {
+		actual, err := syncFileSHA256(temporaryPath, nil)
+		if err != nil {
+			return "", fmt.Errorf("读取下载文件的校验值失败：%w", err)
+		}
+		if actual != remote.SHA256 {
+			return "", fmt.Errorf("下载文件与成都服的 SHA-256 不一致，请重新预览")
+		}
 	}
 	// Parse the actual VPK directory; a login/error page with a .vpk suffix is
 	// never installed. Resource-only map volumes do not need mission metadata.

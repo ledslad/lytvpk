@@ -207,7 +207,7 @@ export function ParseMDMPFile(arg1:string):Promise<minidump.Report>;
 
 export function ParseWorkshopID(arg1:string):Promise<string>;
 
-export function PreviewServerMapSync():Promise<app.ServerMapSyncPreview>;
+export function PreviewServerMapSync(arg1:boolean,arg2:boolean):Promise<app.ServerMapSyncPreview>;
 
 export function PreviewServerMapSyncTrash():Promise<app.ServerMapSyncTrashPreview>;
 

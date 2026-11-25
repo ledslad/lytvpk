@@ -406,8 +406,8 @@ export function ParseWorkshopID(arg1) {
   return window['go']['app']['App']['ParseWorkshopID'](arg1);
 }
 
-export function PreviewServerMapSync() {
-  return window['go']['app']['App']['PreviewServerMapSync']();
+export function PreviewServerMapSync(arg1, arg2) {
+  return window['go']['app']['App']['PreviewServerMapSync'](arg1, arg2);
 }
 
 export function PreviewServerMapSyncTrash() {

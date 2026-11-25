@@ -178,9 +178,33 @@ function createCommunityView(parent, services) {
   cleanup.checked = true;
   cleanupLabel.append(cleanup, document.createTextNode("同时清理服务器已删除的旧地图"), element("span", "safehouse-recoverable", "可恢复"));
   const cleanupOptions = element("div", "safehouse-cleanup-options");
+  const serverDownloadLabel = element("label", "community-sync-checkbox safehouse-server-download");
+  const serverDownload = element("input");
+  serverDownload.type = "checkbox";
+  serverDownload.checked = false;
+  serverDownload.id = "safehouse-server-download";
+  serverDownloadLabel.append(serverDownload, document.createTextNode("全部从服务器下载（跳过 Steam 工坊）"));
+  const verifyLabel = element("label", "community-sync-checkbox safehouse-server-download");
+  const verifyMaps = element("input");
+  verifyMaps.type = "checkbox";
+  verifyMaps.checked = false;
+  verifyMaps.id = "safehouse-verify-maps";
+  verifyLabel.append(verifyMaps, document.createTextNode("校验地图内容，不一致时从成都下载站替换"));
+  function invalidateSourcePreview() {
+    invalidatePlan();
+    lists.replaceChildren();
+    message.textContent = "同步选项已更改，请重新预览。";
+    message.dataset.state = "";
+  }
+  serverDownload.addEventListener("change", invalidateSourcePreview);
+  verifyMaps.addEventListener("change", () => {
+    if (verifyMaps.checked) serverDownload.checked = true;
+    serverDownload.disabled = verifyMaps.checked;
+    invalidateSourcePreview();
+  });
   const cleanupNote = element("div", "safehouse-cleanup-note");
   cleanupNote.append(icon("shield"), note);
-  cleanupOptions.append(cleanupLabel, cleanupNote);
+  cleanupOptions.append(cleanupLabel, serverDownloadLabel, verifyLabel, cleanupNote);
   const message = element("p", "community-sync-message", "预览后可展开查看待下载与待清理的地图。");
   message.setAttribute("role", "status");
   message.setAttribute("aria-live", "polite");
@@ -215,6 +239,8 @@ function createCommunityView(parent, services) {
     settings.disabled = value;
     source.disabled = value;
     cleanup.disabled = value;
+    serverDownload.disabled = value || verifyMaps.checked;
+    verifyMaps.disabled = value;
     apply.disabled = value || !currentPlan;
   }
 
@@ -315,11 +341,11 @@ function createCommunityView(parent, services) {
     }
     invalidatePlan();
     setBusy(true);
-    message.textContent = "正在查询服务器清单、删除记录并比对本机地图…";
+    message.textContent = verifyMaps.checked ? "正在查询成都校验清单并计算本机地图 SHA-256…" : "正在查询服务器清单、删除记录并比对本机地图…";
     message.dataset.state = "";
     lists.replaceChildren();
     try {
-      const plan = await PreviewServerMapSync();
+      const plan = await PreviewServerMapSync(serverDownload.checked, verifyMaps.checked);
       if (!plan?.id) throw new Error("未获得有效的同步预览");
       currentPlan = plan;
       source.value = plan.server;
@@ -328,9 +354,10 @@ function createCommunityView(parent, services) {
       const cleanupItems = Array.isArray(plan.cleanup) ? plan.cleanup : [];
       const unresolved = Array.isArray(plan.unresolved) ? plan.unresolved : [];
       const replacements = Array.isArray(plan.replacements) ? plan.replacements : [];
-      message.textContent = `已匹配 ${plan.present || 0} 项；待下载 ${missing.length} 项（约 ${formatSyncBytes(plan.bytes)}）；网站地图旧版 ${replacements.length} 项；待清理 ${cleanupItems.length} 项；需手动处理 ${unresolved.length} 项。`;
-      showList(lists, "待下载", missing, (item) => `${item.title || item.id} · ${item.download_url ? "网站下载" : "工坊下载"} · ${formatSyncBytes(item.size_bytes)}`);
-      showList(lists, "网站地图旧版（下载前隔离）", replacements, (item) => `${item.name} · ${formatSyncBytes(item.size)}`);
+      const matched = plan.verify_map_contents ? "内容一致" : "已匹配";
+      message.textContent = `${matched} ${plan.present || 0} 项，待下载 ${missing.length} 项（约 ${formatSyncBytes(plan.bytes)}），待替换 ${replacements.length} 项，待清理 ${cleanupItems.length} 项，需手动处理 ${unresolved.length} 项。`;
+      showList(lists, "待下载", missing, (item) => `${item.title || item.id} · ${item.download_url ? "服务器下载" : "工坊下载"} · ${formatSyncBytes(item.size_bytes)}`);
+      showList(lists, plan.verify_map_contents ? "内容不一致（下载前隔离）" : "网站地图旧版（下载前隔离）", replacements, (item) => `${item.name} · ${formatSyncBytes(item.size)}`);
       showList(lists, "待清理（可恢复）", cleanupItems, (item) => `${item.name} · ${formatSyncBytes(item.size)}`);
       showList(lists, "无可用下载源，需手动处理", unresolved, (item) => `${item.title || item.id}${item.source_problem ? `：${item.source_problem}` : ""}`);
     } catch (error) { fail(error); }
@@ -343,7 +370,7 @@ function createCommunityView(parent, services) {
     const cleanupRequested = cleanup.checked;
     const missing = Array.isArray(currentPlan.missing) ? currentPlan.missing : [];
     const websiteDownloads = missing.filter((item) => item.download_url);
-    if (websiteDownloads.length === 0) {
+    if (!currentPlan.requires_confirmation) {
       await executeSync(id, cleanupRequested, false);
       return;
     }
@@ -351,7 +378,7 @@ function createCommunityView(parent, services) {
     const oldCount = cleanupRequested && Array.isArray(currentPlan.cleanup) ? currentPlan.cleanup.length : 0;
     showConfirmModal(
       "确认同步服务器地图？",
-      `将提交 ${missing.length} 个下载任务，其中 ${websiteDownloads.length} 个从网站下载。先隔离 ${oldCount} 个服务器已删除的旧图及 ${replacements.length} 个大小不同的网站地图旧版，再开始下载。取消旧图清理也仍会隔离需要替换的网站地图旧版。下载失败不会自动还原，备份保留在 addons/disabled/server-sync-*，可自行恢复。若下载失败，请前往 ${COMMUNITY_MAP_WEBSITE} 手动下载。`,
+      `将提交 ${missing.length} 个下载任务，其中 ${websiteDownloads.length} 个从网站下载。先隔离 ${oldCount} 个服务器已删除的旧图，以及 ${replacements.length} 个待替换的本机文件，再开始下载。取消旧图清理也仍会隔离需要替换的网站地图旧版。下载失败不会自动还原，备份保留在 addons/disabled/server-sync-*，可自行恢复。若下载失败，请前往 ${COMMUNITY_MAP_WEBSITE} 手动下载。`,
       () => executeSync(id, cleanupRequested, true),
     );
   }

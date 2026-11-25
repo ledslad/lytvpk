@@ -30,7 +30,7 @@ func TestServerMapCatalogRejectsToolsAmbiguousSourcesAndSizeMismatch(t *testing.
 			if mode == "duplicate" {
 				catalog.Files = append(catalog.Files, entry)
 			}
-			mergeServerMapDownloads(&manifest, catalog)
+			mergeServerMapDownloads(&manifest, catalog, false)
 			if (manifest.Maps[0].DownloadURL != "") != (mode == "ok") {
 				t.Fatalf("unsafe matching: %+v", manifest.Maps)
 			}
@@ -65,9 +65,31 @@ func TestServerMapSizeComparisonOnlyAppliesToManualMaps(t *testing.T) {
 	}
 }
 
+func TestServerDownloadOnlyPlansEachPartAndNeverFallsBackToWorkshop(t *testing.T) {
+	manifest := serverSyncManifest{SnapshotID: "snapshot", Maps: []ServerSyncMap{
+		{ID: "123456789", WorkshopID: "123456789", Size: 100},
+		{ID: "123456790", WorkshopID: "123456789", Size: 200},
+		{ID: "123456791", WorkshopID: "123456789", Size: 300},
+	}}
+	local := []ServerSyncLocal{{Name: "123456789.vpk", WorkshopID: "123456789", Size: 100}}
+	root := t.TempDir()
+	defaultPlan := buildSyncPlan(defaultMapSyncServer, root, manifest, local)
+	mergeServerMapDownloads(&manifest, serverMapCatalog{Files: []serverMapCatalogEntry{
+		{ID: "123456790.vpk", Name: "123456790.vpk", Category: "maps", Size: 200, DownloadURL: "/d/123456790.vpk"},
+		{ID: "123456791.vpk", Name: "123456791.vpk", Category: "maps", Size: 299, DownloadURL: "/d/123456791.vpk"},
+	}}, true)
+	plan := buildSyncPlanWithSource(defaultMapSyncServer, root, manifest, local, true)
+	if plan.ID == defaultPlan.ID || !plan.ServerDownloadOnly || plan.Present != 1 || len(plan.Missing) != 1 || len(plan.Unresolved) != 1 {
+		t.Fatalf("unexpected server download plan: %+v", plan)
+	}
+	if plan.Missing[0].ID != "123456790" || plan.Missing[0].DownloadURL != communityMapWebsite+"/d/123456790.vpk" || plan.Unresolved[0].ID != "123456791" || plan.RequiresConfirmation {
+		t.Fatalf("incorrect source or confirmation: %+v", plan)
+	}
+}
+
 func TestServerMapDoesNotBorrowCDDownloadsForGD(t *testing.T) {
 	manifest := serverSyncManifest{Maps: []ServerSyncMap{{ID: "manual", Size: 10, DownloadURL: "https://download.invalid/manual.vpk"}}}
-	attachServerMapDownloads(&http.Client{}, "gd.fastbot.top", &manifest)
+	attachServerMapDownloads(&http.Client{}, "gd.fastbot.top", &manifest, true)
 	if manifest.Maps[0].DownloadURL != "" {
 		t.Fatal("untrusted map URL retained")
 	}

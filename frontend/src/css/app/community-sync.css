@@ -114,6 +114,7 @@
 .safehouse-cleanup-options { margin-top: 21px; padding-top: 17px; border-top: 1px solid var(--safehouse-border); }
 .community-sync-checkbox { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; width: fit-content; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
 .community-sync-checkbox input { width: 14px; height: 14px; margin: 0; accent-color: var(--primary); }
+.safehouse-server-download { margin-top: 8px; }
 .safehouse-recoverable { padding: 1px 6px; border-radius: 5px; font-size: 10px; color: var(--primary); background: var(--primary-50); }
 .safehouse-cleanup-note { display: flex; align-items: flex-start; gap: 6px; margin: 7px 0 0 22px; color: var(--text-tertiary); }
 .safehouse-cleanup-note .safehouse-icon { width: 13px; height: 13px; margin-top: 2px; }
