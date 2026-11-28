@@ -96,6 +96,11 @@ func (plan *serverMapSyncPlan) addVerifiedMap(remote ServerSyncMap, local []Serv
 			}
 			plan.localChecksums[existing.Name] = sum
 		}
+		if plan.AllowlistEnabled {
+			remote.SourceProblem = "同步白名单保留本机同名文件，请手动核对"
+			plan.Unresolved = append(plan.Unresolved, remote)
+			return
+		}
 		plan.Replacements = append(plan.Replacements, *existing)
 	}
 	plan.Missing = append(plan.Missing, remote)

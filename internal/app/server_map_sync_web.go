@@ -146,7 +146,7 @@ func (a *App) startServerMapDownload(remote ServerSyncMap, rootDirectory string)
 		PublishedFileId: serverMapTaskID(remote), Filename: remote.ID + ".vpk",
 		Title: remote.Title, FileSize: strconv.FormatInt(remote.Size, 10), FileUrl: remote.DownloadURL,
 	}
-	return a.createDownloadTask(details, false, true, &remote, rootDirectory)
+	return a.createDownloadTask(details, false, true, &remote, rootDirectory, true)
 }
 
 func finalizeServerMapDownload(task *DownloadTask, temporaryPath string) (string, error) {

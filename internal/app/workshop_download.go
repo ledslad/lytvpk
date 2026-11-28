@@ -37,10 +37,10 @@ func (a *App) StartDownloadTask(details WorkshopFileDetails, useOptimizedIP bool
 }
 
 func (a *App) startDownloadTask(details WorkshopFileDetails, useOptimizedIP bool, syncDownload bool) string {
-	return a.createDownloadTask(details, useOptimizedIP, syncDownload, nil, a.GetRootDirectory())
+	return a.createDownloadTask(details, useOptimizedIP, syncDownload, nil, a.GetRootDirectory(), false)
 }
 
-func (a *App) createDownloadTask(details WorkshopFileDetails, useOptimizedIP bool, syncDownload bool, serverMap *ServerSyncMap, rootDirectory string) string {
+func (a *App) createDownloadTask(details WorkshopFileDetails, useOptimizedIP bool, syncDownload bool, serverMap *ServerSyncMap, rootDirectory string, preserveExisting bool) string {
 	taskID := fmt.Sprintf("%d-%d", time.Now().UnixNano(), downloadTaskSequence.Add(1))
 
 	totalSize := parseFileSize(details.FileSize)
@@ -60,23 +60,24 @@ func (a *App) createDownloadTask(details WorkshopFileDetails, useOptimizedIP boo
 	ctx, cancel := context.WithCancel(context.Background())
 
 	task := &DownloadTask{
-		ID:             taskID,
-		WorkshopID:     details.PublishedFileId,
-		Title:          title,
-		Filename:       filename,
-		PreviewUrl:     details.PreviewUrl,
-		FileUrl:        details.FileUrl,
-		Description:    details.Description,
-		UseOptimizedIP: useOptimizedIP,
-		Status:         "pending",
-		Progress:       0,
-		TotalSize:      totalSize,
-		CreatedAt:      time.Now().Format("2006-01-02 15:04:05"),
-		cancelFunc:     cancel,
-		syncDownload:   syncDownload,
-		rootDirectory:  rootDirectory,
-		workerActive:   true,
-		serverMap:      serverMap,
+		ID:               taskID,
+		WorkshopID:       details.PublishedFileId,
+		Title:            title,
+		Filename:         filename,
+		PreviewUrl:       details.PreviewUrl,
+		FileUrl:          details.FileUrl,
+		Description:      details.Description,
+		UseOptimizedIP:   useOptimizedIP,
+		Status:           "pending",
+		Progress:         0,
+		TotalSize:        totalSize,
+		CreatedAt:        time.Now().Format("2006-01-02 15:04:05"),
+		cancelFunc:       cancel,
+		syncDownload:     syncDownload,
+		preserveExisting: preserveExisting,
+		rootDirectory:    rootDirectory,
+		workerActive:     true,
+		serverMap:        serverMap,
 	}
 
 	taskManager.mu.Lock()
@@ -193,7 +194,7 @@ func (a *App) processDownloadTask(ctx context.Context, task *DownloadTask, downl
 				runtime.EventsEmit(a.ctx, "task_updated", task)
 			}
 
-			if err := commitDownloadFile(ctx, task, finalPath, targetPath); err != nil {
+			if err := a.commitDownloadFile(ctx, task, finalPath, targetPath); err != nil {
 				_ = os.Remove(finalPath)
 				updateStatus("failed", "Rename failed: "+err.Error())
 				return
@@ -460,7 +461,7 @@ func (a *App) processDownloadTask(ctx context.Context, task *DownloadTask, downl
 	}
 
 	// Rename to final
-	if err := commitDownloadFile(ctx, task, tempPath, targetPath); err != nil {
+	if err := a.commitDownloadFile(ctx, task, tempPath, targetPath); err != nil {
 		updateStatus("failed", "Rename failed: "+err.Error())
 		return
 	}

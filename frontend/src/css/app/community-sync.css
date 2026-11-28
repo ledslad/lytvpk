@@ -164,3 +164,34 @@ html.dark-mode .community-map-sync { box-shadow: 0 4px 20px #00000012; }
   .safehouse-sync-toolbar > .community-sync-actions > .btn { flex: 1; }
   .community-sync-checkbox { align-items: flex-start; }
 }
+.safehouse-sync-protection {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+.safehouse-sync-protection > div {
+  width: 100%;
+}
+
+.safehouse-sync-protection .map-sync-source-row {
+  max-width: 480px;
+  margin-block: 8px;
+}
+
+.safehouse-sync-protection ul {
+  max-height: 240px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.safehouse-sync-protection li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 4px;
+  overflow-wrap: anywhere;
+}

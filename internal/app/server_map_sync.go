@@ -20,6 +20,7 @@ import (
 
 const defaultMapSyncServer = "cd.fastbot.top"
 const publicMapsPath = "/api/public/maps"
+const mapSyncAllowlistQuery = "sync_mode=allowlist-v1"
 const communityStatusURL = "https://l4d2.fastbot.top/api/v1/servers"
 
 type ServerSyncMap struct {
@@ -39,13 +40,14 @@ type serverSyncDeleted struct {
 	HasErrors  bool   `json:"has_errors"`
 }
 type serverSyncManifest struct {
-	SnapshotID  string              `json:"snapshot_id"`
-	GeneratedAt string              `json:"generated_at"`
-	Complete    bool                `json:"complete"`
-	Maps        []ServerSyncMap     `json:"maps"`
-	Items       []serverSyncDeleted `json:"items"`
-	Total       int                 `json:"total"`
-	NextOffset  *int                `json:"next_offset"`
+	SnapshotID       string              `json:"snapshot_id"`
+	GeneratedAt      string              `json:"generated_at"`
+	Complete         bool                `json:"complete"`
+	Maps             []ServerSyncMap     `json:"maps"`
+	Items            []serverSyncDeleted `json:"items"`
+	Total            int                 `json:"total"`
+	NextOffset       *int                `json:"next_offset"`
+	AllowlistEnabled bool                `json:"allowlist_enabled"`
 }
 type ServerSyncLocal struct {
 	Name       string `json:"name"`
@@ -57,6 +59,7 @@ type ServerMapSyncPreview struct {
 	ServerDownloadOnly   bool              `json:"server_download_only"`
 	RequiresConfirmation bool              `json:"requires_confirmation"`
 	VerifyMapContents    bool              `json:"verify_map_contents"`
+	AllowlistEnabled     bool              `json:"allowlist_enabled"`
 	ID                   string            `json:"id"`
 	Server               string            `json:"server"`
 	Directory            string            `json:"directory"`
@@ -105,6 +108,9 @@ func syncJSON(client *http.Client, address string, output any) error {
 	if r.StatusCode == 429 {
 		return fmt.Errorf("请求过于频繁，请在 %s 秒后重试", defaultString(r.Header.Get("Retry-After"), "60"))
 	}
+	if r.StatusCode == http.StatusUpgradeRequired {
+		return errors.New("服务器要求更新 LytVPK 后才能同步")
+	}
 	if r.StatusCode != 200 {
 		return fmt.Errorf("服务器查询失败（HTTP %d），已停止清理", r.StatusCode)
 	}
@@ -120,7 +126,7 @@ func syncJSON(client *http.Client, address string, output any) error {
 
 func fetchSyncManifest(client *http.Client, base string) (serverSyncManifest, error) {
 	var current serverSyncManifest
-	if err := syncJSON(client, base+publicMapsPath, &current); err != nil {
+	if err := syncJSON(client, base+publicMapsPath+"?"+mapSyncAllowlistQuery, &current); err != nil {
 		return current, err
 	}
 	stamp, err := time.Parse(time.RFC3339Nano, current.GeneratedAt)
@@ -128,13 +134,16 @@ func fetchSyncManifest(client *http.Client, base string) (serverSyncManifest, er
 		return current, errors.New("服务器地图快照过期或不完整，已停止清理")
 	}
 	current.Items = []serverSyncDeleted{}
+	if current.AllowlistEnabled {
+		return current, nil
+	}
 	offset, total := 0, -1
 	for page := 0; page < 11; page++ {
 		var deleted serverSyncManifest
-		if err := syncJSON(client, fmt.Sprintf("%s%s/deleted?limit=1000&offset=%d", base, publicMapsPath, offset), &deleted); err != nil {
+		if err := syncJSON(client, fmt.Sprintf("%s%s/deleted?limit=1000&offset=%d&%s", base, publicMapsPath, offset, mapSyncAllowlistQuery), &deleted); err != nil {
 			return current, err
 		}
-		if !deleted.Complete || deleted.SnapshotID != current.SnapshotID || deleted.Items == nil || deleted.Total < 0 || deleted.Total > 10000 || (total != -1 && total != deleted.Total) {
+		if !deleted.Complete || deleted.AllowlistEnabled || deleted.SnapshotID != current.SnapshotID || deleted.Items == nil || deleted.Total < 0 || deleted.Total > 10000 || (total != -1 && total != deleted.Total) {
 			return current, errors.New("删除记录与当前清单快照不一致，请稍后重新预览")
 		}
 		total = deleted.Total
@@ -221,11 +230,25 @@ func buildSyncPlanWithSource(server, root string, manifest serverSyncManifest, l
 }
 
 func buildSyncPlanWithVerification(server, root string, manifest serverSyncManifest, local []ServerSyncLocal, serverDownloadOnly, verifyMapContents bool) serverMapSyncPlan {
+	return buildSyncPlanWithProtection(server, root, manifest, local, serverDownloadOnly, verifyMapContents, nil)
+}
+
+func buildSyncPlanWithProtection(server, root string, manifest serverSyncManifest, local []ServerSyncLocal, serverDownloadOnly, verifyMapContents bool, protected []string) serverMapSyncPlan {
 	plan := serverMapSyncPlan{ServerMapSyncPreview: ServerMapSyncPreview{Server: server, Directory: root, ServerDownloadOnly: serverDownloadOnly, VerifyMapContents: verifyMapContents, Missing: []ServerSyncMap{}, Unresolved: []ServerSyncMap{}, Cleanup: []ServerSyncLocal{}, Replacements: []ServerSyncLocal{}}, Snapshot: manifest.SnapshotID, Created: time.Now()}
+	plan.AllowlistEnabled = manifest.AllowlistEnabled
 	if verifyMapContents {
 		plan.localChecksums = make(map[string]string)
 	}
 	for _, remote := range manifest.Maps {
+		target := remote.ID + ".vpk"
+		if remote.DownloadURL == "" && protocol.IsValidWorkshopID(remote.WorkshopID) && !serverDownloadOnly {
+			target = remote.WorkshopID + ".vpk"
+		}
+		if syncFileProtected(protected, target) || syncFileProtected(protected, remote.ID+".vpk") {
+			remote.SourceProblem = "本机保护白名单已跳过此文件"
+			plan.Unresolved = append(plan.Unresolved, remote)
+			continue
+		}
 		if verifyMapContents {
 			plan.addVerifiedMap(remote, local)
 			continue
@@ -268,6 +291,16 @@ func buildSyncPlanWithVerification(server, root string, manifest serverSyncManif
 			plan.Present++
 			continue
 		}
+		if plan.AllowlistEnabled && outdated != nil {
+			remote.SourceProblem = "同步白名单保留本机同名文件，请手动核对"
+			plan.Unresolved = append(plan.Unresolved, remote)
+			continue
+		}
+		if plan.AllowlistEnabled && remote.DownloadURL == "" && !manual && remote.ID != workshopID {
+			remote.SourceProblem = "工坊文件名与白名单上的 VPK 不一致，请手动核对"
+			plan.Unresolved = append(plan.Unresolved, remote)
+			continue
+		}
 		if (remote.DownloadURL != "" && remote.Size > 0) || (!manual && !plan.ServerDownloadOnly) {
 			plan.Missing = append(plan.Missing, remote)
 			plan.Bytes += remote.Size
@@ -281,7 +314,7 @@ func buildSyncPlanWithVerification(server, root string, manifest serverSyncManif
 	for _, file := range local {
 		// Resource parts often have no missions/chapter metadata. The explicit
 		// per-file deletion record, not VPK content classification, proves scope.
-		if syncFileRemoved(file, manifest) {
+		if !plan.AllowlistEnabled && !syncFileProtected(protected, file.Name) && syncFileRemoved(file, manifest) {
 			plan.Cleanup = append(plan.Cleanup, file)
 		}
 	}
@@ -292,7 +325,8 @@ func buildSyncPlanWithVerification(server, root string, manifest serverSyncManif
 		Snapshot       string
 		Local          []ServerSyncLocal
 		LocalChecksums map[string]string
-	}{plan.ServerMapSyncPreview, plan.Snapshot, local, plan.localChecksums})
+		Protected      []string
+	}{plan.ServerMapSyncPreview, plan.Snapshot, local, plan.localChecksums, protected})
 	sum := sha256.Sum256(data)
 	plan.ID = hex.EncodeToString(sum[:])
 	return plan
@@ -336,7 +370,7 @@ func (a *App) makeSyncPlan(serverDownloadOnly, verifyMapContents bool) (serverMa
 	if err != nil {
 		return serverMapSyncPlan{}, err
 	}
-	return buildSyncPlanWithVerification(server, root, manifest, local, serverDownloadOnly, verifyMapContents), nil
+	return buildSyncPlanWithProtection(server, root, manifest, local, serverDownloadOnly, verifyMapContents, a.GetServerMapSyncProtectedFiles()), nil
 }
 
 func (a *App) PreviewServerMapSync(serverDownloadOnly, verifyMapContents bool) (ServerMapSyncPreview, error) {
@@ -373,9 +407,6 @@ func (a *App) StartServerMapSync(planID string, cleanup bool, confirmed bool) (S
 	a.mapSyncMu.Lock()
 	defer a.mapSyncMu.Unlock()
 	result := ServerMapSyncResult{Errors: []string{}}
-	if cleanup && a.HasActiveDownloads() {
-		return result, errors.New("下载进行中，请等待完成后同步并清理，或取消清理选项仅补图")
-	}
 	if a.mapSyncPlan == nil || a.mapSyncPlan.ID != planID || time.Since(a.mapSyncPlan.Created) > 10*time.Minute {
 		return result, errors.New("预览已过期，请重新预览")
 	}
@@ -386,6 +417,7 @@ func (a *App) StartServerMapSync(planID string, cleanup bool, confirmed bool) (S
 	if plan.ID != planID {
 		return result, errors.New("服务器清单或本机文件已改变，请重新预览后执行")
 	}
+	cleanup = cleanup && !plan.AllowlistEnabled
 	if err := requireServerMapSyncConfirmation(plan, confirmed); err != nil {
 		return result, err
 	}
@@ -475,7 +507,7 @@ func (a *App) StartServerMapSync(planID string, cleanup bool, confirmed bool) (S
 			result.AlreadyQueued++
 			continue
 		}
-		a.createDownloadTask(item, a.GetWorkshopPreferredIP(), true, nil, plan.Directory)
+		a.createDownloadTask(item, a.GetWorkshopPreferredIP(), true, nil, plan.Directory, plan.AllowlistEnabled)
 		result.Queued++
 	}
 	a.mapSyncPlan = nil

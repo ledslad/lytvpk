@@ -57,10 +57,16 @@ async function fixture(t) {
   const parent = new Node("div");
   page.append(parent);
   const state = { config: { mapSyncServer: "cd.fastbot.top" }, root: "D:/Game/addons", started: [], previewModes: [], connected: [], statusCalls: 0, cleared: [], confirmation: null };
+  let protectedFiles = [];
   const services = {
     getConfig: () => state.config,
     saveConfig: async (patch) => Object.assign(state.config, patch),
     GetRootDirectory: async () => state.root,
+    GetServerMapSyncProtectedFiles: async () => protectedFiles,
+    SetServerMapSyncFileProtected: async (file, protectedFile) => {
+      protectedFiles = protectedFile ? [...protectedFiles, file] : protectedFiles.filter((item) => item !== file);
+      return protectedFiles;
+    },
     GetCommunityServerStatuses: async () => {
       state.statusCalls++;
       return { servers: [{ id: "cd", online: true, players: 4, max_players: 8, map_title: "Test campaign" }] };
@@ -88,6 +94,31 @@ async function fixture(t) {
   const message = findAll(parent, (node) => node.className === "community-sync-message")[0];
   return { parent, page, doc, state, services, mounted, button, source, message, timer };
 }
+
+test("local protection can be added and removed and invalidates a sync preview", async (t) => {
+  const { parent, button, message } = await fixture(t);
+  await button("预览变更").emit("click");
+  await button("本机保护白名单").emit("click");
+  const filename = findAll(parent, (node) => node["aria-label"] === "要保护的 VPK 文件名")[0];
+  filename.value = "private.vpk";
+  await filename.parent.emit("submit", { preventDefault() {} });
+  assert.equal(button("同步地图").disabled, true);
+  assert.match(message.textContent, /重新预览/);
+  const remove = findAll(parent, (node) => node["aria-label"] === "取消保护 private.vpk")[0];
+  assert.ok(remove);
+  await remove.emit("click");
+  assert.match(parent.textContent, /暂未添加保护文件/);
+});
+
+test("server allowlist disables the existing cleanup choice", async (t) => {
+  const { parent, state, button, message } = await fixture(t);
+  state.plan = { id: "approved", server: "cd.fastbot.top", directory: state.root, allowlist_enabled: true };
+  await button("预览变更").emit("click");
+  assert.equal(findAll(parent, (node) => node.type === "checkbox")[0].disabled, true);
+  assert.match(message.textContent, /服务器已启用同步白名单/);
+  await button("同步地图").emit("click");
+  assert.deepEqual(state.started, [["approved", false, false]]);
+});
 
 test("safehouse requires a preview and keeps cleanup optional with folded details", async (t) => {
   const { parent, state, button, message } = await fixture(t);

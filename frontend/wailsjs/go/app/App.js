@@ -238,6 +238,10 @@ export function GetSecondaryTags(arg1) {
   return window['go']['app']['App']['GetSecondaryTags'](arg1);
 }
 
+export function GetServerMapSyncProtectedFiles() {
+  return window['go']['app']['App']['GetServerMapSyncProtectedFiles']();
+}
+
 export function GetServerStorage() {
   return window['go']['app']['App']['GetServerStorage']();
 }
@@ -524,6 +528,10 @@ export function SetModRotation(arg1) {
 
 export function SetRootDirectory(arg1) {
   return window['go']['app']['App']['SetRootDirectory'](arg1);
+}
+
+export function SetServerMapSyncFileProtected(arg1, arg2) {
+  return window['go']['app']['App']['SetServerMapSyncFileProtected'](arg1, arg2);
 }
 
 export function SetSnapshotDirectory(arg1, arg2) {

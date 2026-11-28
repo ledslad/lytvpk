@@ -3,6 +3,7 @@ import {
   ConnectToServer, GetCommunityServerStatuses, GetRootDirectory,
   PreviewServerMapSync, StartServerMapSync, RestoreLastServerMapSync,
   PreviewServerMapSyncTrash, ClearServerMapSyncTrash,
+  GetServerMapSyncProtectedFiles, SetServerMapSyncFileProtected,
 } from "../../../../wailsjs/go/app/App";
 import { BrowserOpenURL } from "../../../../wailsjs/runtime/runtime";
 import { getConfig, saveConfig } from "../../core/config.js";
@@ -15,6 +16,7 @@ export function mountSafehousePage() {
     ConnectToServer, GetCommunityServerStatuses, GetRootDirectory,
     PreviewServerMapSync, StartServerMapSync, RestoreLastServerMapSync,
     PreviewServerMapSyncTrash, ClearServerMapSyncTrash, showConfirmModal,
+    GetServerMapSyncProtectedFiles, SetServerMapSyncFileProtected,
     BrowserOpenURL, getConfig, saveConfig, switchAppPage,
   });
 }

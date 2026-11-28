@@ -123,6 +123,8 @@ export function GetRootDirectory():Promise<string>;
 
 export function GetSecondaryTags(arg1:string):Promise<Array<string>>;
 
+export function GetServerMapSyncProtectedFiles():Promise<Array<string>>;
+
 export function GetServerStorage():Promise<app.ServerStorage>;
 
 export function GetSnapshotDirectory():Promise<string>;
@@ -266,6 +268,8 @@ export function SetAddonListOrder(arg1:Array<string>):Promise<void>;
 export function SetModRotation(arg1:app.RotationConfig):Promise<void>;
 
 export function SetRootDirectory(arg1:string):Promise<void>;
+
+export function SetServerMapSyncFileProtected(arg1:string,arg2:boolean):Promise<Array<string>>;
 
 export function SetSnapshotDirectory(arg1:string,arg2:boolean):Promise<void>;
 

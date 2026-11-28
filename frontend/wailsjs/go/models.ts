@@ -161,6 +161,7 @@ export namespace app {
 	    windowState?: WindowState;
 	    snapshotDirectory?: string;
 	    mapSyncServer: string;
+	    mapSyncProtectedFiles?: string[];
 	    migrationVersion: number;
 	
 	    static createFrom(source: any = {}) {
@@ -195,6 +196,7 @@ export namespace app {
 	        this.windowState = this.convertValues(source["windowState"], WindowState);
 	        this.snapshotDirectory = source["snapshotDirectory"];
 	        this.mapSyncServer = source["mapSyncServer"];
+	        this.mapSyncProtectedFiles = source["mapSyncProtectedFiles"];
 	        this.migrationVersion = source["migrationVersion"];
 	    }
 	
@@ -982,6 +984,7 @@ export namespace app {
 	    server_download_only: boolean;
 	    requires_confirmation: boolean;
 	    verify_map_contents: boolean;
+	    allowlist_enabled: boolean;
 	    id: string;
 	    server: string;
 	    directory: string;
@@ -1001,6 +1004,7 @@ export namespace app {
 	        this.server_download_only = source["server_download_only"];
 	        this.requires_confirmation = source["requires_confirmation"];
 	        this.verify_map_contents = source["verify_map_contents"];
+	        this.allowlist_enabled = source["allowlist_enabled"];
 	        this.id = source["id"];
 	        this.server = source["server"];
 	        this.directory = source["directory"];

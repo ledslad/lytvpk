@@ -53,27 +53,28 @@ type WorkshopDetailsResult struct {
 }
 
 type DownloadTask struct {
-	ID             string             `json:"id"`
-	WorkshopID     string             `json:"workshop_id"`
-	Title          string             `json:"title"`
-	Filename       string             `json:"filename"`
-	FilePath       string             `json:"file_path"`
-	PreviewUrl     string             `json:"preview_url"`
-	FileUrl        string             `json:"file_url"` // Added for retry
-	UseOptimizedIP bool               `json:"use_optimized_ip"`
-	Status         string             `json:"status"` // "pending", "downloading", "completed", "failed", "cancelled"
-	Progress       int                `json:"progress"`
-	TotalSize      int64              `json:"total_size"`
-	DownloadedSize int64              `json:"downloaded_size"`
-	Speed          string             `json:"speed"`
-	Error          string             `json:"error"`
-	Description    string             `json:"description"`
-	CreatedAt      string             `json:"created_at"`
-	cancelFunc     context.CancelFunc `json:"-"`
-	syncDownload   bool
-	rootDirectory  string
-	workerActive   bool
-	serverMap      *ServerSyncMap
+	ID               string             `json:"id"`
+	WorkshopID       string             `json:"workshop_id"`
+	Title            string             `json:"title"`
+	Filename         string             `json:"filename"`
+	FilePath         string             `json:"file_path"`
+	PreviewUrl       string             `json:"preview_url"`
+	FileUrl          string             `json:"file_url"` // Added for retry
+	UseOptimizedIP   bool               `json:"use_optimized_ip"`
+	Status           string             `json:"status"` // "pending", "downloading", "completed", "failed", "cancelled"
+	Progress         int                `json:"progress"`
+	TotalSize        int64              `json:"total_size"`
+	DownloadedSize   int64              `json:"downloaded_size"`
+	Speed            string             `json:"speed"`
+	Error            string             `json:"error"`
+	Description      string             `json:"description"`
+	CreatedAt        string             `json:"created_at"`
+	cancelFunc       context.CancelFunc `json:"-"`
+	syncDownload     bool
+	preserveExisting bool
+	rootDirectory    string
+	workerActive     bool
+	serverMap        *ServerSyncMap
 }
 
 // TaskManager manages download tasks

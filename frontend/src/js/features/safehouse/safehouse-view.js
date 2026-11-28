@@ -1,4 +1,5 @@
 import { COMMUNITY_SERVER_PRESETS, formatSyncBytes, normalizeSyncSource } from "./presets.js";
+import { createSyncProtectionPanel } from "./sync-protection.js";
 
 const COMMUNITY_GUIDE_PAGE = "https://l4d2.fastbot.top/server-guide";
 const COMMUNITY_MAP_WEBSITE = "https://l4d2.fastbot.top/";
@@ -209,6 +210,12 @@ function createCommunityView(parent, services) {
   message.setAttribute("role", "status");
   message.setAttribute("aria-live", "polite");
   const lists = element("div", "community-sync-lists");
+  const protection = createSyncProtectionPanel(services, () => {
+    invalidatePlan();
+    lists.replaceChildren();
+    message.textContent = "本机保护白名单已更新，请重新预览。";
+    message.dataset.state = "success";
+  });
   const downloadHelp = element("p", "community-sync-note", "网站地图（无工坊 ID）按文件名和大小比对。下载失败请到 ");
   const downloadLink = element("a", "", COMMUNITY_MAP_WEBSITE);
   downloadLink.href = COMMUNITY_MAP_WEBSITE;
@@ -217,7 +224,7 @@ function createCommunityView(parent, services) {
     BrowserOpenURL(COMMUNITY_MAP_WEBSITE);
   });
   downloadHelp.append(downloadLink, document.createTextNode(" 手动下载。"));
-  sync.append(syncHeading, directoryRow, sourceField, toolbar, cleanupOptions, message, lists, downloadHelp);
+  sync.append(syncHeading, directoryRow, sourceField, toolbar, cleanupOptions, protection, message, lists, downloadHelp);
   view.appendChild(sync);
   parent.prepend(view);
 
@@ -238,7 +245,7 @@ function createCommunityView(parent, services) {
     emptyTrash.disabled = value;
     settings.disabled = value;
     source.disabled = value;
-    cleanup.disabled = value;
+    cleanup.disabled = value || Boolean(currentPlan?.allowlist_enabled);
     serverDownload.disabled = value || verifyMaps.checked;
     verifyMaps.disabled = value;
     apply.disabled = value || !currentPlan;
@@ -247,6 +254,7 @@ function createCommunityView(parent, services) {
   function invalidatePlan() {
     currentPlan = null;
     apply.disabled = true;
+    cleanup.disabled = busy;
   }
 
   function fail(error) {
@@ -355,11 +363,12 @@ function createCommunityView(parent, services) {
       const unresolved = Array.isArray(plan.unresolved) ? plan.unresolved : [];
       const replacements = Array.isArray(plan.replacements) ? plan.replacements : [];
       const matched = plan.verify_map_contents ? "内容一致" : "已匹配";
-      message.textContent = `${matched} ${plan.present || 0} 项，待下载 ${missing.length} 项（约 ${formatSyncBytes(plan.bytes)}），待替换 ${replacements.length} 项，待清理 ${cleanupItems.length} 项，需手动处理 ${unresolved.length} 项。`;
+      const mode = plan.allowlist_enabled ? "服务器已启用同步白名单，仅补图并保留本机文件。" : "";
+      message.textContent = `${mode}${matched} ${plan.present || 0} 项，待下载 ${missing.length} 项（约 ${formatSyncBytes(plan.bytes)}），待替换 ${replacements.length} 项，待清理 ${cleanupItems.length} 项，需手动处理 ${unresolved.length} 项。`;
       showList(lists, "待下载", missing, (item) => `${item.title || item.id} · ${item.download_url ? "服务器下载" : "工坊下载"} · ${formatSyncBytes(item.size_bytes)}`);
       showList(lists, plan.verify_map_contents ? "内容不一致（下载前隔离）" : "网站地图旧版（下载前隔离）", replacements, (item) => `${item.name} · ${formatSyncBytes(item.size)}`);
       showList(lists, "待清理（可恢复）", cleanupItems, (item) => `${item.name} · ${formatSyncBytes(item.size)}`);
-      showList(lists, "无可用下载源，需手动处理", unresolved, (item) => `${item.title || item.id}${item.source_problem ? `：${item.source_problem}` : ""}`);
+      showList(lists, "已跳过或需手动处理", unresolved, (item) => `${item.title || item.id}${item.source_problem ? `：${item.source_problem}` : ""}`);
     } catch (error) { fail(error); }
     finally { setBusy(false); }
   }
@@ -367,7 +376,7 @@ function createCommunityView(parent, services) {
   async function applySync() {
     if (busy || !currentPlan) return;
     const id = currentPlan.id;
-    const cleanupRequested = cleanup.checked;
+    const cleanupRequested = cleanup.checked && !currentPlan.allowlist_enabled;
     const missing = Array.isArray(currentPlan.missing) ? currentPlan.missing : [];
     const websiteDownloads = missing.filter((item) => item.download_url);
     if (!currentPlan.requires_confirmation) {

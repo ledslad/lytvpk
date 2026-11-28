@@ -16,8 +16,6 @@ var syncFinalizeMu sync.Mutex
 // created. Linking the completed file fails atomically if the target exists.
 // No cached workshop or disabled file is removed by a synchronization task.
 func finalizeSyncDownload(task *DownloadTask, temporaryPath string) (string, error) {
-	syncFinalizeMu.Lock()
-	defer syncFinalizeMu.Unlock()
 	if task.rootDirectory == "" || task.TotalSize <= 0 {
 		return "", fmt.Errorf("同步下载缺少目标目录或预期文件大小")
 	}
@@ -38,6 +36,9 @@ func finalizeSyncDownload(task *DownloadTask, temporaryPath string) (string, err
 	targetPath := filepath.Join(task.rootDirectory, filename)
 	quarantineDirectory := ""
 	if existing, err := os.Lstat(targetPath); err == nil {
+		if task.preserveExisting {
+			return "", fmt.Errorf("目标已存在，保留原文件：%s", targetPath)
+		}
 		metaInfo, metaErr := os.Lstat(GetMetaFilePath(targetPath))
 		if !existing.Mode().IsRegular() || metaErr != nil || !metaInfo.Mode().IsRegular() {
 			return "", fmt.Errorf("目标已存在且无法确认工坊身份，保留原文件：%s", targetPath)
@@ -116,11 +117,16 @@ func restoreSyncUpdate(root, directory string) error {
 	return nil
 }
 
-func commitDownloadFile(ctx context.Context, task *DownloadTask, temporaryPath, targetPath string) error {
+func (a *App) commitDownloadFile(ctx context.Context, task *DownloadTask, temporaryPath, targetPath string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if task.syncDownload {
+		syncFinalizeMu.Lock()
+		defer syncFinalizeMu.Unlock()
+		if syncFileProtected(a.GetServerMapSyncProtectedFiles(), task.Filename) {
+			return fmt.Errorf("本机保护白名单已跳过 %s", task.Filename)
+		}
 		_, err := finalizeSyncDownload(task, temporaryPath)
 		return err
 	}

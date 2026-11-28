@@ -116,6 +116,7 @@ type App struct {
 	workshopHistoryPath            string
 	snapshotDirectory              string
 	mapSyncServer                  string
+	mapSyncProtectedFiles          []string
 	mapSyncMu                      sync.Mutex
 	mapSyncPlan                    *serverMapSyncPlan
 }
@@ -148,8 +149,9 @@ type ConfigFile struct {
 	WindowState                    *WindowState       `json:"windowState,omitempty"`
 	SnapshotDirectory              string             `json:"snapshotDirectory,omitempty"`
 	// v2: localStorage migrated; v3: workshop DNS settings; v4: VPK list sorting.
-	MapSyncServer    string `json:"mapSyncServer"`
-	MigrationVersion int    `json:"migrationVersion"`
+	MapSyncServer         string   `json:"mapSyncServer"`
+	MapSyncProtectedFiles []string `json:"mapSyncProtectedFiles,omitempty"`
+	MigrationVersion      int      `json:"migrationVersion"`
 }
 
 // WindowState 记录上次退出时的窗口尺寸与最大化状态，尺寸为 Wails 逻辑像素（96 DPI 基准）

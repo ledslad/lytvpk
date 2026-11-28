@@ -134,6 +134,7 @@ func (a *App) loadConfig() {
 	a.lastUpdateCheckTime = config.LastUpdateCheckTime
 	a.snapshotDirectory = strings.TrimSpace(config.SnapshotDirectory)
 	a.mapSyncServer = defaultString(config.MapSyncServer, defaultMapSyncServer)
+	a.mapSyncProtectedFiles = config.MapSyncProtectedFiles
 	if config.WindowState != nil && config.WindowState.Width > 0 && config.WindowState.Height > 0 {
 		a.windowState = *config.WindowState
 	}
@@ -214,6 +215,7 @@ func (a *App) snapshotConfigLocked() ConfigFile {
 		WindowState:                    windowState,
 		SnapshotDirectory:              a.snapshotDirectory,
 		MapSyncServer:                  defaultString(a.mapSyncServer, defaultMapSyncServer),
+		MapSyncProtectedFiles:          append([]string{}, a.mapSyncProtectedFiles...),
 		MigrationVersion:               a.migrationVersion,
 	}
 }
@@ -228,6 +230,7 @@ func (a *App) writeConfigFile(config ConfigFile) error {
 		dnsConfig.Mode = "dnspod"
 	}
 	config.WorkshopDNS = &dnsConfig
+	config.MapSyncProtectedFiles = append([]string{}, a.mapSyncProtectedFiles...)
 	if config.MigrationVersion < a.migrationVersion {
 		config.MigrationVersion = a.migrationVersion
 	}
